@@ -41,6 +41,8 @@ var (
 	// question has reached its maximum revision number, meaning the contract
 	// can no longer be revised.
 	ErrContractFinalized = errors.New("contract cannot be revised further")
+
+	MinimumRemainingFund = types.SiacoinPrecision.Div64(100) // 10mSC
 )
 
 // wrapResponseErr formats RPC response errors nicely, wrapping them in either
@@ -263,7 +265,7 @@ func (s *Session) SectorRoots(offset, n int) (_ []crypto.Hash, err error) {
 	}
 	bandwidthPrice := s.host.DownloadBandwidthPrice.Mul64(downloadBandwidth)
 	price := s.host.BaseRPCPrice.Add(bandwidthPrice)
-	if s.rev.RenterFunds().Cmp(price) < 0 {
+	if s.rev.RenterFunds().Cmp(MinimumRemainingFund) < 0 {
 		return nil, ErrInsufficientFunds
 	}
 
@@ -355,7 +357,7 @@ func (s *Session) Read(w io.Writer, sections []renterhost.RPCReadRequestSection)
 	}
 	bandwidthPrice := s.host.DownloadBandwidthPrice.Mul64(bandwidth)
 	price := s.host.BaseRPCPrice.Add(sectorAccessPrice).Add(bandwidthPrice)
-	if s.rev.RenterFunds().Cmp(price) < 0 {
+	if s.rev.RenterFunds().Cmp(MinimumRemainingFund) < 0 {
 		return ErrInsufficientFunds
 	}
 
@@ -522,7 +524,7 @@ func (s *Session) Write(actions []renterhost.RPCWriteAction) (err error) {
 	price := s.host.BaseRPCPrice.Add(bandwidthPrice).Add(storagePrice)
 	// NOTE: hosts can be picky about price, so add 5% just to be sure.
 	price = price.MulFloat(1.05)
-	if rev.NewValidProofOutputs[0].Value.Cmp(price) < 0 {
+	if rev.NewValidProofOutputs[0].Value.Cmp(MinimumRemainingFund) < 0 {
 		return ErrInsufficientFunds
 	}
 	// hosts can also be picky about collateral, so subtract 5%.
