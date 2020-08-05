@@ -26,7 +26,8 @@ import (
 )
 
 const (
-	DefaultLockTimeout = 10e3 // 10 seconds
+	DefaultLockTimeout = 10e3  // 10 seconds
+	DefaultDialTimeout = 60000 // 60 seconds
 )
 
 var (
@@ -49,11 +50,17 @@ var (
 	ErrContractFinalized = errors.New("contract cannot be revised further")
 
 	lockTimeout uint64 = DefaultLockTimeout
+	dialTimeout uint64 = DefaultDialTimeout
 )
 
 // SetLockTimeout sets the timeout for lock requests to the given value.
 func SetLockTimeout(timeout uint64) {
 	lockTimeout = timeout
+}
+
+// SetDialTimeout sets the timeout for dialing a host to the given value.
+func SetDialTimeout(timeout uint64) {
+	dialTimeout = timeout
 }
 
 // wrapResponseErr formats RPC response errors nicely, wrapping them in either
@@ -752,13 +759,13 @@ func NewUnlockedSession(hostIP modules.NetAddress, hostKey hostdb.HostPublicKey,
 // same as above, but without error wrapping, since we call it from NewSession too.
 func newUnlockedSession(hostIP modules.NetAddress, hostKey hostdb.HostPublicKey, currentHeight types.BlockHeight) (_ *Session, err error) {
 	start := time.Now()
-	tcpConn, err := net.DialTimeout("tcp", string(hostIP), 60*time.Second)
+	tcpConn, err := net.DialTimeout("tcp", string(hostIP), time.Duration(dialTimeout)*time.Millisecond)
 	if err != nil {
 		return nil, err
 	}
 	latency := time.Since(start)
 	conn := &statsConn{Conn: tcpConn}
-	err = conn.SetDeadline(time.Now().Add(60 * time.Second))
+	err = conn.SetDeadline(time.Now().Add(time.Duration(dialTimeout) * time.Millisecond))
 	if err != nil {
 		return nil, err
 	}
