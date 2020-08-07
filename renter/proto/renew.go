@@ -30,7 +30,7 @@ func RenewContract(w Wallet, tpool TransactionPool, id types.FileContractID, key
 		}
 	}()
 
-	if err := s.Lock(id, key); err != nil {
+	if err := s.Lock(id, key, time.Duration(lockTimeout)*time.Millisecond); err != nil {
 		return ContractRevision{}, nil, err
 	}
 	if build.VersionCmp(s.host.Version, "1.4.4") >= 0 {
