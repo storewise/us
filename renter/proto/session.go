@@ -205,6 +205,10 @@ func (s *Session) sufficientFunds(price types.Currency) bool {
 // The contract will still be available via the Revision method, but invoking
 // other RPCs may result in errors or panics.
 func (s *Session) Lock(id types.FileContractID, key ed25519.PrivateKey, timeout time.Duration) (err error) {
+	if timeout == 0 {
+		timeout = time.Duration(lockTimeout) * time.Millisecond
+	}
+
 	defer wrapErr(&err, "Lock")
 	defer s.collectStats(renterhost.RPCLockID, &err)()
 	req := &renterhost.RPCLockRequest{
