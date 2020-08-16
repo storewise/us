@@ -3,7 +3,7 @@ package proto
 import (
 	"crypto/ed25519"
 	"math/big"
-	"math/rand"
+	"reflect"
 	"time"
 
 	"github.com/hashicorp/go-multierror"
@@ -11,7 +11,7 @@ import (
 	"gitlab.com/NebulousLabs/Sia/crypto"
 	"gitlab.com/NebulousLabs/Sia/modules"
 	"gitlab.com/NebulousLabs/Sia/types"
-
+	"lukechampine.com/frand"
 	"lukechampine.com/us/ed25519hash"
 	"lukechampine.com/us/hostdb"
 	"lukechampine.com/us/renterhost"
@@ -237,10 +237,30 @@ func (s *Session) FormContract(w Wallet, tpool TransactionPool, key ed25519.Priv
 }
 
 func fundSiacoins(txn *types.Transaction, amount types.Currency, changeAddr types.UnlockHash, w Wallet) ([]crypto.Hash, error) {
-	// first try to fund without using limbo outputs
-	outputs, err := w.UnspentOutputs(false)
+	// w.UnspentOutputs(true) returns the outputs that exist after Limbo
+	// transactions are applied. This is not ideal, because the host is more
+	// likely to reject transactions that have unconfirmed parents. On the other
+	// hand, w.UnspentOutputs(false) won't return any outputs that were created
+	// in Limbo transactions, but it *will* return outputs that have been
+	// *spent* in Limbo transactions. So what we really want is the intersection
+	// of these sets, keeping only the confirmed outputs that were not spent in
+	// Limbo transactions.
+	limboOutputs, err := w.UnspentOutputs(true)
 	if err != nil {
 		return nil, err
+	}
+	confirmedOutputs, err := w.UnspentOutputs(false)
+	if err != nil {
+		return nil, err
+	}
+	var outputs []modules.UnspentOutput
+	for _, lo := range limboOutputs {
+		for _, co := range confirmedOutputs {
+			if co.ID == lo.ID {
+				outputs = append(outputs, lo)
+				break
+			}
+		}
 	}
 	var balance types.Currency
 	for _, o := range outputs {
@@ -248,12 +268,10 @@ func fundSiacoins(txn *types.Transaction, amount types.Currency, changeAddr type
 	}
 	if balance.Cmp(amount) < 0 {
 		// insufficient funds; proceed with limbo outputs
-		outputs, err = w.UnspentOutputs(true)
-		if err != nil {
-			return nil, err
-		}
+		outputs = limboOutputs
 	}
-	shuffle(outputs)
+	// choose outputs randomly
+	frand.Shuffle(len(outputs), reflect.Swapper(outputs))
 
 	// keep adding outputs until we have enough
 	var fundingOutputs []modules.UnspentOutput
@@ -339,12 +357,4 @@ func taxAdjustedPayout(target types.Currency) types.Currency {
 	guess.Add(guess, tm)
 
 	return types.NewCurrency(guess)
-}
-
-func shuffle(data []modules.UnspentOutput) {
-	n := len(data)
-	for i := n - 1; i >= 0; i-- {
-		j := rand.Intn(i + 1)
-		data[i], data[j] = data[j], data[i]
-	}
 }
