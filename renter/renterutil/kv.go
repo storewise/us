@@ -2,6 +2,7 @@ package renterutil
 
 import (
 	"bytes"
+	"context"
 	"io"
 
 	"lukechampine.com/frand"
@@ -142,12 +143,12 @@ func (kv PseudoKV) Delete(key []byte) error {
 
 // GC deletes from hosts all sectors that are not currently associated with any
 // value.
-func (kv PseudoKV) GC() error {
+func (kv PseudoKV) GC(ctx context.Context) error {
 	sectors, err := kv.DB.UnreferencedSectors()
 	if err != nil {
 		return err
 	}
-	return kv.Deleter.DeleteSectors(kv.DB, sectors)
+	return kv.Deleter.DeleteSectors(ctx, kv.DB, sectors)
 }
 
 // Close implements io.Closer.

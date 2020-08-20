@@ -2,6 +2,7 @@ package renterutil
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -940,7 +941,7 @@ func (sbu SerialBlobUpdater) UpdateBlob(db MetaDB, b DBBlob) error {
 
 // A SectorDeleter deletes sectors from hosts.
 type SectorDeleter interface {
-	DeleteSectors(db MetaDB, sectors map[hostdb.HostPublicKey][]crypto.Hash) error
+	DeleteSectors(ctx context.Context, db MetaDB, sectors map[hostdb.HostPublicKey][]crypto.Hash) error
 }
 
 // SerialSectorDeleter deletes sectors from hosts, one host at a time.
@@ -949,8 +950,12 @@ type SerialSectorDeleter struct {
 }
 
 // DeleteSectors implements SectorDeleter.
-func (ssd SerialSectorDeleter) DeleteSectors(db MetaDB, sectors map[hostdb.HostPublicKey][]crypto.Hash) error {
+func (ssd SerialSectorDeleter) DeleteSectors(ctx context.Context, _ MetaDB, sectors map[hostdb.HostPublicKey][]crypto.Hash) error {
 	for hostKey, roots := range sectors {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+
 		h, err := ssd.Hosts.acquire(hostKey)
 		if err != nil {
 			return err

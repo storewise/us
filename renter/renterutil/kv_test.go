@@ -2,6 +2,7 @@ package renterutil
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"io"
 	"io/ioutil"
@@ -340,6 +341,7 @@ func TestKVGC(t *testing.T) {
 	kv, cleanup := createTestingKV(t, 2, 3)
 	defer cleanup()
 
+	ctx := context.Background()
 	bigdata := frand.Bytes(renterhost.SectorSize * 4)
 	err := kv.PutBytes([]byte("foo"), bigdata)
 	if err != nil {
@@ -349,7 +351,7 @@ func TestKVGC(t *testing.T) {
 	if err := kv.Delete([]byte("foo")); err != nil {
 		t.Fatal(err)
 	}
-	if err := kv.GC(); err != nil {
+	if err := kv.GC(ctx); err != nil {
 		t.Fatal(err)
 	}
 
