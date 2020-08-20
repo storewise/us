@@ -13,7 +13,7 @@ import (
 	"testing/iotest"
 
 	"lukechampine.com/frand"
-	"lukechampine.com/us/internal/ghost"
+	"lukechampine.com/us/ghost"
 	"lukechampine.com/us/renterhost"
 )
 
@@ -70,8 +70,8 @@ func TestKVPutGet(t *testing.T) {
 	kv, cleanup := createTestingKV(t, 2, 3)
 	defer cleanup()
 
-	ctx:=context.Background()
-	err := kv.PutBytes(ctx,[]byte("foo"), []byte("bar"))
+	ctx := context.Background()
+	err := kv.PutBytes(ctx, []byte("foo"), []byte("bar"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -85,7 +85,7 @@ func TestKVPutGet(t *testing.T) {
 
 	// large value, using streaming API
 	bigdata := frand.Bytes(renterhost.SectorSize * 4)
-	err = kv.Put(ctx,[]byte("foo"), bytes.NewReader(bigdata))
+	err = kv.Put(ctx, []byte("foo"), bytes.NewReader(bigdata))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -115,9 +115,9 @@ func TestKVBufferHosts(t *testing.T) {
 	defer cleanup()
 	kv.M, kv.N = 2, 3 // 3 buffer hosts
 
-	ctx:=context.Background()
+	ctx := context.Background()
 	bigdata := frand.Bytes(renterhost.SectorSize * 6)
-	err := kv.Put(ctx,[]byte("foo"), bytes.NewReader(bigdata))
+	err := kv.Put(ctx, []byte("foo"), bytes.NewReader(bigdata))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -164,10 +164,10 @@ func TestKVResumeReader(t *testing.T) {
 	kv, cleanup := createTestingKV(t, 2, 3)
 	defer cleanup()
 
-	ctx:=context.Background()
+	ctx := context.Background()
 	bigdata := frand.Bytes(renterhost.SectorSize * 4)
 	r := bytes.NewReader(bigdata)
-	err := kv.Put(ctx,[]byte("foo"), &errorAfterNReader{
+	err := kv.Put(ctx, []byte("foo"), &errorAfterNReader{
 		R:   r,
 		N:   renterhost.SectorSize * 3,
 		Err: iotest.ErrTimeout, // arbitrary
@@ -185,7 +185,7 @@ func TestKVResumeReader(t *testing.T) {
 	}
 
 	// resume
-	err = kv.Resume(ctx,[]byte("foo"), r)
+	err = kv.Resume(ctx, []byte("foo"), r)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -220,10 +220,10 @@ func TestKVResumeHost(t *testing.T) {
 		Downloader: SerialChunkDownloader{Hosts: hs},
 	}
 
-	ctx:=context.Background()
+	ctx := context.Background()
 	bigdata := frand.Bytes(renterhost.SectorSize * 4)
 	r := bytes.NewReader(bigdata)
-	err := kv.Put(ctx,[]byte("foo"), &fnAfterNReader{
+	err := kv.Put(ctx, []byte("foo"), &fnAfterNReader{
 		R: r,
 		N: renterhost.SectorSize * 2,
 		Fn: func() {
@@ -248,7 +248,7 @@ func TestKVResumeHost(t *testing.T) {
 	hs.AddHost(c)
 
 	// resume
-	err = kv.Resume(ctx,[]byte("foo"), r)
+	err = kv.Resume(ctx, []byte("foo"), r)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -269,9 +269,9 @@ func TestKVUpdate(t *testing.T) {
 	kv, cleanup := createTestingKV(t, 2, 3)
 	defer cleanup()
 
-	ctx:=context.Background()
+	ctx := context.Background()
 	bigdata := frand.Bytes(renterhost.SectorSize * 4)
-	err := kv.PutBytes(ctx,[]byte("foo"), bigdata)
+	err := kv.PutBytes(ctx, []byte("foo"), bigdata)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -284,7 +284,7 @@ func TestKVUpdate(t *testing.T) {
 		M: 3,
 		N: 4,
 	}
-	err = kv.Update(ctx,[]byte("foo"), SerialBlobUpdater{gcu})
+	err = kv.Update(ctx, []byte("foo"), SerialBlobUpdater{gcu})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -308,9 +308,9 @@ func TestKVMigrate(t *testing.T) {
 	kv, cleanup := createTestingKV(t, 2, 3)
 	defer cleanup()
 
-	ctx:=context.Background()
+	ctx := context.Background()
 	bigdata := frand.Bytes(renterhost.SectorSize * 4)
-	err := kv.PutBytes(ctx,[]byte("foo"), bigdata)
+	err := kv.PutBytes(ctx, []byte("foo"), bigdata)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -330,7 +330,7 @@ func TestKVMigrate(t *testing.T) {
 	hs.AddHost(c)
 
 	// migrate
-	err = kv.Migrate(ctx,[]byte("foo"), hs)
+	err = kv.Migrate(ctx, []byte("foo"), hs)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -347,9 +347,9 @@ func TestKVGC(t *testing.T) {
 	kv, cleanup := createTestingKV(t, 2, 3)
 	defer cleanup()
 
-	ctx:=context.Background()
+	ctx := context.Background()
 	bigdata := frand.Bytes(renterhost.SectorSize * 4)
-	err := kv.PutBytes(ctx,[]byte("foo"), bigdata)
+	err := kv.PutBytes(ctx, []byte("foo"), bigdata)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -357,7 +357,7 @@ func TestKVGC(t *testing.T) {
 	if err := kv.Delete([]byte("foo")); err != nil {
 		t.Fatal(err)
 	}
-	if err := kv.GC(); err != nil {
+	if err := kv.GC(ctx); err != nil {
 		t.Fatal(err)
 	}
 
@@ -389,16 +389,16 @@ func TestKVPutGetParallel(t *testing.T) {
 		kvs[i].largeVal = frand.Bytes(renterhost.SectorSize * 4)
 	}
 	// spawn multiple goroutines uploading in parallel
-	ctx:=context.Background()
+	ctx := context.Background()
 	errCh := make(chan error)
 	for i := range kvs {
 		go func(i int) {
 			errCh <- func() error {
-				err := kv.PutBytes(ctx,kvs[i].smallKey, kvs[i].smallVal)
+				err := kv.PutBytes(ctx, kvs[i].smallKey, kvs[i].smallVal)
 				if err != nil {
 					return err
 				}
-				return kv.Put(ctx,kvs[i].largeKey, bytes.NewReader(kvs[i].largeVal))
+				return kv.Put(ctx, kvs[i].largeKey, bytes.NewReader(kvs[i].largeVal))
 			}()
 		}(i)
 	}
@@ -451,9 +451,9 @@ func TestKVMinimumAvailability(t *testing.T) {
 	hs := kv.Uploader.(ParallelChunkUploader).Hosts
 	kv.Uploader = MinimumChunkUploader{Hosts: hs}
 
-	ctx:=context.Background()
+	ctx := context.Background()
 	bigdata := frand.Bytes(renterhost.SectorSize * 4)
-	err := kv.Put(ctx,[]byte("foo"), bytes.NewReader(bigdata))
+	err := kv.Put(ctx, []byte("foo"), bytes.NewReader(bigdata))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -479,7 +479,7 @@ func TestKVMinimumAvailability(t *testing.T) {
 
 	// resume to full redundancy
 	kv.Uploader = ParallelChunkUploader{Hosts: hs}
-	err = kv.Resume(ctx,[]byte("foo"), bytes.NewReader(bigdata))
+	err = kv.Resume(ctx, []byte("foo"), bytes.NewReader(bigdata))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -542,12 +542,12 @@ func BenchmarkKVPut(b *testing.B) {
 	defer cleanup()
 	data := frand.Bytes(renterhost.SectorSize * 2)
 
-	ctx:=context.Background()
+	ctx := context.Background()
 	b.ResetTimer()
 	b.SetBytes(int64(len(data)))
 	b.ReportAllocs()
 	for i := 0; i < b.N; i++ {
-		err := kv.PutBytes(ctx,[]byte("foo"), data)
+		err := kv.PutBytes(ctx, []byte("foo"), data)
 		if err != nil {
 			b.Fatal(err)
 		}
@@ -557,9 +557,9 @@ func BenchmarkKVPut(b *testing.B) {
 func BenchmarkKVGet(b *testing.B) {
 	kv, cleanup := createTestingKV(b, 2, 3)
 	defer cleanup()
-	ctx:=context.Background()
+	ctx := context.Background()
 	data := frand.Bytes(renterhost.SectorSize * 2)
-	err := kv.PutBytes(ctx,[]byte("foo"), data)
+	err := kv.PutBytes(ctx, []byte("foo"), data)
 	if err != nil {
 		b.Fatal(err)
 	}
@@ -580,7 +580,7 @@ func BenchmarkKVPutParallel(b *testing.B) {
 	defer cleanup()
 	data := frand.Bytes(renterhost.SectorSize * 2)
 
-	ctx:=context.Background()
+	ctx := context.Background()
 	b.ResetTimer()
 	b.SetBytes(int64(len(data)))
 	b.ReportAllocs()
@@ -590,7 +590,7 @@ func BenchmarkKVPutParallel(b *testing.B) {
 		go func() {
 			var err error
 			for i := 0; i < b.N/p; i++ {
-				err = kv.PutBytes(ctx,[]byte("foo"), data)
+				err = kv.PutBytes(ctx, []byte("foo"), data)
 				if err != nil {
 					break
 				}
@@ -608,9 +608,9 @@ func BenchmarkKVPutParallel(b *testing.B) {
 func BenchmarkKVGetParallel(b *testing.B) {
 	kv, cleanup := createTestingKV(b, 2, 3)
 	defer cleanup()
-	ctx:=context.Background()
+	ctx := context.Background()
 	data := frand.Bytes(renterhost.SectorSize * 2)
-	err := kv.PutBytes(ctx,[]byte("foo"), data)
+	err := kv.PutBytes(ctx, []byte("foo"), data)
 	if err != nil {
 		b.Fatal(err)
 	}
