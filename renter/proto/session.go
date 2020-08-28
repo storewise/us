@@ -578,7 +578,7 @@ func (s *Session) Write(actions []renterhost.RPCWriteAction) (err error) {
 	// check that enough funds are available
 	price := s.host.BaseRPCPrice.Add(bandwidthPrice).Add(storagePrice)
 	// NOTE: hosts can be picky about price, so add 5% just to be sure.
-	price = price.MulFloat(1.05)
+	price = price.MulFloat(1.10)
 	if !s.sufficientFunds(price) {
 		return ErrInsufficientFunds
 	}
