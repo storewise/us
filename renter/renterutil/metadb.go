@@ -27,10 +27,18 @@ type DBBlob struct {
 
 // DeriveKey derives an encryption key from a seed and a chunk ID.
 func (b *DBBlob) DeriveKey(chunk uint64) (key renter.KeySeed) {
+	var idx uint64
+	for i, id := range b.Chunks {
+		if id == chunk {
+			idx = uint64(i)
+			break
+		}
+	}
+
 	buf := make([]byte, 7+32+8)
 	n := copy(buf, "keyseed")
 	n += copy(buf[n:], b.Seed[:])
-	binary.LittleEndian.PutUint64(buf[n:], chunk)
+	binary.LittleEndian.PutUint64(buf[n:], idx)
 	h := blake2b.Sum256(buf)
 	copy(key[:], h[:])
 	return
@@ -241,6 +249,7 @@ func NewEphemeralMetaDB() *EphemeralMetaDB {
 	db := &EphemeralMetaDB{
 		refs:  make(map[uint64]int),
 		blobs: make(map[string]DBBlob),
+		meta:  make(map[string]string),
 	}
 	return db
 }
