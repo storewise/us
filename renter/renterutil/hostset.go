@@ -112,7 +112,7 @@ func (set *HostSet) Close() error {
 	for hostKey, lh := range set.sessions {
 		lh.mu.Lock()
 		if lh.s != nil {
-			if e := lh.s.Close(); e != nil {
+			if e := lh.s.Close(); e != nil && !strings.Contains(e.Error(), "use of closed network connection") {
 				err = multierror.Append(err, e)
 			}
 			lh.s = nil
