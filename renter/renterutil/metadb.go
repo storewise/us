@@ -112,6 +112,27 @@ func (db *EphemeralMetaDB) SetChunkShard(id uint64, i int, s uint64) error {
 	return nil
 }
 
+func (db *EphemeralMetaDB) AddChunkAndShards(m int, length uint64, ss []*DBShard) (c DBChunk, err error) {
+	shards := make([]uint64, len(ss))
+	for i, s := range ss {
+		id, err := db.AddShard(*s)
+		if err != nil {
+			return c, err
+		}
+		shards[i] = id
+	}
+	db.mu.Lock()
+	defer db.mu.Unlock()
+	c = DBChunk{
+		ID:        uint64(len(db.chunks)) + 1,
+		Shards:    shards,
+		MinShards: uint8(m),
+		Len:       length,
+	}
+	db.chunks = append(db.chunks, c)
+	return c, nil
+}
+
 // Chunk implements MetaDB.
 func (db *EphemeralMetaDB) Chunk(id uint64) (DBChunk, error) {
 	if id == 0 {
@@ -239,15 +260,24 @@ var (
 // AddShard implements MetaDB.
 func (db *BoltMetaDB) AddShard(s DBShard) (id uint64, err error) {
 	err = db.bdb.Update(func(tx *bolt.Tx) error {
-		id, err = tx.Bucket(bucketChunks).NextSequence()
-		if err != nil {
-			return err
-		}
-		key := make([]byte, 8)
-		binary.LittleEndian.PutUint64(key, id)
-		return tx.Bucket(bucketShards).Put(key, encoding.Marshal(s))
+		id, err = db.addShard(tx, s)
+		return err
 	})
 	return
+}
+
+func (db *BoltMetaDB) addShard(tx *bolt.Tx, s DBShard) (id uint64, err error) {
+	id, err = tx.Bucket(bucketShards).NextSequence()
+	if err != nil {
+		return 0, err
+	}
+	key := make([]byte, 8)
+	binary.LittleEndian.PutUint64(key, id)
+	err = tx.Bucket(bucketShards).Put(key, encoding.Marshal(s))
+	if err != nil {
+		return 0, err
+	}
+	return id, nil
 }
 
 // Shard implements MetaDB.
@@ -263,21 +293,30 @@ func (db *BoltMetaDB) Shard(id uint64) (s DBShard, err error) {
 // AddChunk implements MetaDB.
 func (db *BoltMetaDB) AddChunk(m, n int, length uint64) (c DBChunk, err error) {
 	err = db.bdb.Update(func(tx *bolt.Tx) error {
-		id, err := tx.Bucket(bucketChunks).NextSequence()
-		if err != nil {
-			return err
-		}
-		c = DBChunk{
-			ID:        id,
-			Shards:    make([]uint64, n),
-			MinShards: uint8(m),
-			Len:       length,
-		}
-		key := make([]byte, 8)
-		binary.LittleEndian.PutUint64(key, id)
-		return tx.Bucket(bucketChunks).Put(key, encoding.Marshal(c))
+		c, err = db.addChunk(tx, m, length, make([]uint64, n))
+		return err
 	})
 	return
+}
+
+func (db *BoltMetaDB) addChunk(tx *bolt.Tx, m int, length uint64, shards []uint64) (c DBChunk, err error) {
+	id, err := tx.Bucket(bucketChunks).NextSequence()
+	if err != nil {
+		return DBChunk{}, err
+	}
+	c = DBChunk{
+		ID:        id,
+		Shards:    shards,
+		MinShards: uint8(m),
+		Len:       length,
+	}
+	key := make([]byte, 8)
+	binary.LittleEndian.PutUint64(key, id)
+	err = tx.Bucket(bucketChunks).Put(key, encoding.Marshal(c))
+	if err != nil {
+		return DBChunk{}, err
+	}
+	return c, nil
 }
 
 // SetChunkShard implements MetaDB.
@@ -292,6 +331,22 @@ func (db *BoltMetaDB) SetChunkShard(id uint64, i int, s uint64) error {
 		c.Shards[i] = s
 		return tx.Bucket(bucketChunks).Put(key, encoding.Marshal(c))
 	})
+}
+
+func (db *BoltMetaDB) AddChunkAndShards(m int, length uint64, ss []*DBShard) (c DBChunk, err error) {
+	err = db.bdb.Update(func(tx *bolt.Tx) error {
+		shards := make([]uint64, len(ss))
+		for i, s := range ss {
+			id, err := db.addShard(tx, *s)
+			if err != nil {
+				return nil
+			}
+			shards[i] = id
+		}
+		c, err = db.addChunk(tx, m, length, shards)
+		return err
+	})
+	return c, err
 }
 
 // Chunk implements MetaDB.
