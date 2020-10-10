@@ -495,15 +495,7 @@ func TestKVMinimumAvailability(t *testing.T) {
 }
 
 func wasCanceled(err error) bool {
-	err = errors.Unwrap(err)
-	switch err := err.(type) {
-	case *HostError:
-		return err.Err == context.Canceled || err.Err == context.DeadlineExceeded
-	case HostErrorSet:
-		return err[0].Err == context.Canceled || err[0].Err == context.DeadlineExceeded
-	default:
-		return false
-	}
+	return errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)
 }
 
 func TestKVCancel(t *testing.T) {
