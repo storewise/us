@@ -96,8 +96,8 @@ type HostSet struct {
 	sessions      map[hostdb.HostPublicKey]*lockedHost
 	hkr           renter.HostKeyResolver
 	currentHeight types.BlockHeight
-	stats         proto.RPCStatsRecorder
 	lockTimeout   time.Duration
+	onConnect     func(s *proto.Session)
 }
 
 // HasHost returns true if the specified host is in the set.
@@ -158,13 +158,12 @@ func (set *HostSet) release(host hostdb.HostPublicKey) {
 	lh.mu.Unlock()
 }
 
-// SetRPCStatsRecorder sets the RPCStatsRecorder for all Sessions initiated by
-// the HostSet.
-func (set *HostSet) SetRPCStatsRecorder(r proto.RPCStatsRecorder) { set.stats = r }
-
 // SetLockTimeout sets the timeout used for all Lock RPCs in Sessions initiated
 // by the HostSet.
 func (set *HostSet) SetLockTimeout(timeout time.Duration) { set.lockTimeout = timeout }
+
+// SetOnConnect sets the function called on all newly-connected Sessions.
+func (set *HostSet) SetOnConnect(fn func(*proto.Session)) { set.onConnect = fn }
 
 // AddHost adds a host to the set for later use.
 func (set *HostSet) AddHost(c renter.Contract) {
@@ -212,11 +211,21 @@ func (set *HostSet) AddHost(c renter.Contract) {
 			lh.s.Close()
 			return err
 		}
-		lh.s.SetRPCStatsRecorder(set.stats)
+		set.onConnect(lh.s)
 		lastSeen = time.Now()
 		return nil
 	}
 	set.sessions[c.HostKey] = lh
+}
+
+// RemoveHost removes a host from the set, closing its Session if active.
+func (set *HostSet) RemoveHost(host hostdb.HostPublicKey) {
+	lh, ok := set.sessions[host]
+	if !ok {
+		return
+	}
+	lh.s.Close()
+	delete(set.sessions, host)
 }
 
 // NewHostSet creates an empty HostSet using the provided resolver and current
@@ -227,5 +236,6 @@ func NewHostSet(hkr renter.HostKeyResolver, currentHeight types.BlockHeight) *Ho
 		currentHeight: currentHeight,
 		sessions:      make(map[hostdb.HostPublicKey]*lockedHost),
 		lockTimeout:   10 * time.Second,
+		onConnect:     func(*proto.Session) {},
 	}
 }
