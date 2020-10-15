@@ -6,6 +6,7 @@ import (
 	"sort"
 	"unsafe"
 
+	"github.com/pkg/errors"
 	"gitlab.com/NebulousLabs/Sia/types"
 	"lukechampine.com/us/ed25519hash"
 )
@@ -13,6 +14,10 @@ import (
 // BytesPerInput is the encoded size of a SiacoinInput and corresponding
 // TransactionSignature, assuming standard UnlockConditions.
 const BytesPerInput = 241
+
+// ErrInsufficientFunds is returned when the wallet does not control enough
+// outputs to fund a transaction.
+var ErrInsufficientFunds = errors.New("insufficient funds")
 
 // SumOutputs returns the total value of the supplied outputs.
 func SumOutputs(outputs []UnspentOutput) types.Currency {
@@ -119,7 +124,7 @@ func UnconfirmedParents(txn types.Transaction, limbo []LimboTransaction) []Limbo
 // inputs among n outputs, each containing per siacoins. It returns the minimal
 // set of inputs that will fund such a transaction, along with the resulting fee
 // and change. Inputs with value equal to per are ignored. If the inputs are not
-// sufficient to fund n outputs, DistrubteFunds returns nil.
+// sufficient to fund n outputs, DistributeFunds returns nil.
 func DistributeFunds(inputs []UnspentOutput, n int, per, feePerByte types.Currency) (ins []UnspentOutput, fee, change types.Currency) {
 	// sort
 	ins = append([]UnspentOutput(nil), inputs...)
@@ -135,17 +140,21 @@ func DistributeFunds(inputs []UnspentOutput, n int, per, feePerByte types.Curren
 	}
 	ins = filtered
 
+	const bytesPerOutput = 64 // approximate; depends on currency size
+	outputFees := feePerByte.Mul64(bytesPerOutput).Mul64(uint64(n))
+	feePerInput := feePerByte.Mul64(BytesPerInput)
+
 	// search for minimal set
 	want := per.Mul64(uint64(n))
 	i := sort.Search(len(ins)+1, func(i int) bool {
-		fee = feePerByte.Mul64(BytesPerInput).Mul64(uint64(i))
+		fee = feePerInput.Mul64(uint64(i)).Add(outputFees)
 		return SumOutputs(ins[:i]).Cmp(want.Add(fee)) >= 0
 	})
 	if i == len(ins)+1 {
 		// insufficient funds
 		return nil, types.ZeroCurrency, types.ZeroCurrency
 	}
-	fee = feePerByte.Mul64(BytesPerInput).Mul64(uint64(i))
+	fee = feePerInput.Mul64(uint64(i)).Add(outputFees)
 	change = SumOutputs(ins[:i]).Sub(want.Add(fee))
 	return ins[:i], fee, change
 }
