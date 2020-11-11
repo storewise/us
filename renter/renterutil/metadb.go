@@ -45,6 +45,7 @@ type DBShard struct {
 type MetaDB interface {
 	AddBlob(b DBBlob) error
 	Blob(key []byte) (DBBlob, error)
+	RenameBlob(oldKey, newKey []byte) error
 	DeleteBlob(key []byte) error
 	ForEachBlob(func(key []byte) error) error
 
@@ -160,6 +161,21 @@ func (db *EphemeralMetaDB) Blob(key []byte) (DBBlob, error) {
 		return DBBlob{}, ErrKeyNotFound
 	}
 	return b, nil
+}
+
+// RenameBlob renames a blob from oldKey to newKey.
+func (db *EphemeralMetaDB) RenameBlob(oldKey, newKey []byte) error {
+	db.mu.Lock()
+	defer db.mu.Unlock()
+
+	b, ok := db.blobs[string(oldKey)]
+	if !ok {
+		return ErrKeyNotFound
+	}
+	db.blobs[string(newKey)] = b
+	delete(db.blobs, string(oldKey))
+
+	return nil
 }
 
 // DeleteBlob implements MetaDB.
@@ -377,6 +393,24 @@ func (db *BoltMetaDB) Blob(key []byte) (b DBBlob, err error) {
 	})
 	b.Key = key
 	return
+}
+
+// RenameBlob renames a blob from oldKey to newKey.
+func (db *BoltMetaDB) RenameBlob(oldKey, newKey []byte) error {
+	return db.bdb.Update(func(tx *bolt.Tx) error {
+		bucket := tx.Bucket(bucketBlobs)
+
+		blobBytes := bucket.Get(oldKey)
+		if len(blobBytes) == 0 {
+			return ErrKeyNotFound
+		}
+		err := bucket.Put(newKey, blobBytes)
+		if err != nil {
+			return err
+		}
+
+		return bucket.Delete(oldKey)
+	})
 }
 
 // DeleteBlob implements MetaDB.
