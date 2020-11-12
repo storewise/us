@@ -46,7 +46,7 @@ type MetaDB interface {
 	AddBlob(b DBBlob) error
 	Blob(key []byte) (DBBlob, error)
 	RenameBlob(oldKey, newKey []byte) error
-	DeleteBlob(key []byte) error
+	DeleteBlob(key []byte) (map[hostdb.HostPublicKey][]crypto.Hash, error)
 	ForEachBlob(func(key []byte) error) error
 
 	AddChunk(m, n int, length uint64) (DBChunk, error)
@@ -179,12 +179,12 @@ func (db *EphemeralMetaDB) RenameBlob(oldKey, newKey []byte) error {
 }
 
 // DeleteBlob implements MetaDB.
-func (db *EphemeralMetaDB) DeleteBlob(key []byte) error {
+func (db *EphemeralMetaDB) DeleteBlob(key []byte) (map[hostdb.HostPublicKey][]crypto.Hash, error) {
 	db.mu.Lock()
 	defer db.mu.Unlock()
 	b, ok := db.blobs[string(key)]
 	if !ok {
-		return nil
+		return nil, ErrKeyNotFound
 	}
 	for _, cid := range b.Chunks {
 		for _, sid := range db.chunks[cid-1].Shards {
@@ -192,7 +192,7 @@ func (db *EphemeralMetaDB) DeleteBlob(key []byte) error {
 		}
 	}
 	delete(db.blobs, string(key))
-	return nil
+	return db.UnreferencedSectors()
 }
 
 // ForEachBlob implements MetaDB.
@@ -287,9 +287,7 @@ func (db *BoltMetaDB) addShard(tx *bolt.Tx, s DBShard) (id uint64, err error) {
 	if err != nil {
 		return 0, err
 	}
-	key := make([]byte, 8)
-	binary.LittleEndian.PutUint64(key, id)
-	err = tx.Bucket(bucketShards).Put(key, encoding.Marshal(s))
+	err = tx.Bucket(bucketShards).Put(idToKey(id), encoding.Marshal(s))
 	if err != nil {
 		return 0, err
 	}
@@ -298,12 +296,23 @@ func (db *BoltMetaDB) addShard(tx *bolt.Tx, s DBShard) (id uint64, err error) {
 
 // Shard implements MetaDB.
 func (db *BoltMetaDB) Shard(id uint64) (s DBShard, err error) {
-	key := make([]byte, 8)
-	binary.LittleEndian.PutUint64(key, id)
 	err = db.bdb.View(func(tx *bolt.Tx) error {
-		return encoding.Unmarshal(tx.Bucket(bucketShards).Get(key), &s)
+		s, err = db.shard(tx, id)
+		return err
 	})
 	return
+}
+
+func (db *BoltMetaDB) shard(tx *bolt.Tx, id uint64) (DBShard, error) {
+	var s DBShard
+	if err := encoding.Unmarshal(tx.Bucket(bucketShards).Get(idToKey(id)), &s); err != nil {
+		return DBShard{}, err
+	}
+	return s, nil
+}
+
+func (db *BoltMetaDB) deleteShard(tx *bolt.Tx, id uint64) error {
+	return tx.Bucket(bucketShards).Delete(idToKey(id))
 }
 
 // AddChunk implements MetaDB.
@@ -326,9 +335,7 @@ func (db *BoltMetaDB) addChunk(tx *bolt.Tx, m int, length uint64, shards []uint6
 		MinShards: uint8(m),
 		Len:       length,
 	}
-	key := make([]byte, 8)
-	binary.LittleEndian.PutUint64(key, id)
-	err = tx.Bucket(bucketChunks).Put(key, encoding.Marshal(c))
+	err = tx.Bucket(bucketChunks).Put(idToKey(id), encoding.Marshal(c))
 	if err != nil {
 		return DBChunk{}, err
 	}
@@ -338,9 +345,8 @@ func (db *BoltMetaDB) addChunk(tx *bolt.Tx, m int, length uint64, shards []uint6
 // SetChunkShard implements MetaDB.
 func (db *BoltMetaDB) SetChunkShard(id uint64, i int, s uint64) error {
 	return db.bdb.Update(func(tx *bolt.Tx) error {
-		key := make([]byte, 8)
-		binary.LittleEndian.PutUint64(key, id)
 		var c DBChunk
+		key := idToKey(id)
 		if err := encoding.Unmarshal(tx.Bucket(bucketChunks).Get(key), &c); err != nil {
 			return err
 		}
@@ -367,12 +373,23 @@ func (db *BoltMetaDB) AddChunkAndShards(m int, length uint64, ss []*DBShard) (c 
 
 // Chunk implements MetaDB.
 func (db *BoltMetaDB) Chunk(id uint64) (c DBChunk, err error) {
-	key := make([]byte, 8)
-	binary.LittleEndian.PutUint64(key, id)
 	err = db.bdb.View(func(tx *bolt.Tx) error {
-		return encoding.Unmarshal(tx.Bucket(bucketChunks).Get(key), &c)
+		c, err = db.chunk(tx, id)
+		return err
 	})
 	return
+}
+
+func (db *BoltMetaDB) chunk(tx *bolt.Tx, id uint64) (DBChunk, error) {
+	var c DBChunk
+	if err := encoding.Unmarshal(tx.Bucket(bucketChunks).Get(idToKey(id)), &c); err != nil {
+		return DBChunk{}, err
+	}
+	return c, nil
+}
+
+func (db *BoltMetaDB) deleteChunk(tx *bolt.Tx, id uint64) error {
+	return tx.Bucket(bucketChunks).Delete(idToKey(id))
 }
 
 // AddBlob implements MetaDB.
@@ -385,14 +402,24 @@ func (db *BoltMetaDB) AddBlob(b DBBlob) error {
 // Blob implements MetaDB.
 func (db *BoltMetaDB) Blob(key []byte) (b DBBlob, err error) {
 	err = db.bdb.View(func(tx *bolt.Tx) error {
-		blobBytes := tx.Bucket(bucketBlobs).Get(key)
-		if len(blobBytes) == 0 {
-			return ErrKeyNotFound
-		}
-		return encoding.UnmarshalAll(blobBytes, &b.Chunks, &b.Seed)
+		b, err = db.blob(tx, key)
+		return err
 	})
-	b.Key = key
 	return
+}
+
+func (db *BoltMetaDB) blob(tx *bolt.Tx, key []byte) (DBBlob, error) {
+	blobBytes := tx.Bucket(bucketBlobs).Get(key)
+	if len(blobBytes) == 0 {
+		return DBBlob{}, ErrKeyNotFound
+	}
+
+	var b DBBlob
+	if err := encoding.UnmarshalAll(blobBytes, &b.Chunks, &b.Seed); err != nil {
+		return DBBlob{}, err
+	}
+	b.Key = key
+	return b, nil
 }
 
 // RenameBlob renames a blob from oldKey to newKey.
@@ -414,11 +441,37 @@ func (db *BoltMetaDB) RenameBlob(oldKey, newKey []byte) error {
 }
 
 // DeleteBlob implements MetaDB.
-func (db *BoltMetaDB) DeleteBlob(key []byte) error {
-	return db.bdb.Update(func(tx *bolt.Tx) error {
-		// TODO: refcounts
+func (db *BoltMetaDB) DeleteBlob(key []byte) (map[hostdb.HostPublicKey][]crypto.Hash, error) {
+	sectors := make(map[hostdb.HostPublicKey][]crypto.Hash)
+	if err := db.bdb.Update(func(tx *bolt.Tx) error {
+		blob, err := db.blob(tx, key)
+		if err != nil {
+			return err
+		}
+		for _, cid := range blob.Chunks {
+			chunk, err := db.chunk(tx, cid)
+			if err != nil {
+				return err
+			}
+			for _, sid := range chunk.Shards {
+				shard, err := db.shard(tx, sid)
+				if err != nil {
+					return err
+				}
+				sectors[shard.HostKey] = append(sectors[shard.HostKey], shard.SectorRoot)
+				if err := db.deleteShard(tx, sid); err != nil {
+					return err
+				}
+			}
+			if err := db.deleteChunk(tx, cid); err != nil {
+				return err
+			}
+		}
 		return tx.Bucket(bucketBlobs).Delete(key)
-	})
+	}); err != nil {
+		return nil, err
+	}
+	return sectors, nil
 }
 
 // ForEachBlob implements MetaDB.
@@ -489,4 +542,10 @@ func NewBoltMetaDB(path string) (*BoltMetaDB, error) {
 		return nil, err
 	}
 	return db, nil
+}
+
+func idToKey(id uint64) []byte {
+	key := make([]byte, 8)
+	binary.LittleEndian.PutUint64(key, id)
+	return key
 }
