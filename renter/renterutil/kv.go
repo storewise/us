@@ -140,8 +140,12 @@ func (kv *PseudoKV) Migrate(ctx context.Context, key []byte, hosts *HostSet) err
 //
 // The actual data stored on hosts is not deleted. To delete host data, use
 // PseudoKV.GC.
-func (kv PseudoKV) Delete(key []byte) error {
-	return kv.DB.DeleteBlob(key)
+func (kv PseudoKV) Delete(ctx context.Context, key []byte) error {
+	sectors, err := kv.DB.DeleteBlob(key)
+	if err != nil {
+		return err
+	}
+	return kv.Deleter.DeleteSectors(ctx, kv.DB, sectors)
 }
 
 // GC deletes from hosts all sectors that are not currently associated with any

@@ -9,6 +9,11 @@ repos:
           - -local
           - github.com/storewise
       - id: golangci-lint-mod
+        args:
+          - --skip-dirs
+          - internal/reedsolomon
+          - --skip-dirs
+          - ed25519hash/internal/edwards25519
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v3.3.0
     hooks:

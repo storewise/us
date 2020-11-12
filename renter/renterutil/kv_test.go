@@ -356,7 +356,7 @@ func TestKVGC(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := kv.Delete([]byte("foo")); err != nil {
+	if err := kv.Delete(ctx, []byte("foo")); err != nil {
 		t.Fatal(err)
 	}
 	if err := kv.GC(ctx); err != nil {
