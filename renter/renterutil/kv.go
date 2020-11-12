@@ -148,6 +148,11 @@ func (kv PseudoKV) Delete(ctx context.Context, key []byte) error {
 	return kv.Deleter.DeleteSectors(ctx, kv.DB, sectors)
 }
 
+// Rename renames a blob.
+func (kv PseudoKV) Rename(oldKey, newKey []byte) error {
+	return kv.DB.RenameBlob(oldKey, newKey)
+}
+
 // GC deletes from hosts all sectors that are not currently associated with any
 // value.
 func (kv PseudoKV) GC(ctx context.Context) error {
