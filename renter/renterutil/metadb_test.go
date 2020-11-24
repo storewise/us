@@ -329,3 +329,117 @@ func TestBoltMetaDB_DeleteBlob(t *testing.T) {
 		t.Error("View returns an error:", err)
 	}
 }
+
+func TestBoltMetaDB_AddMetadata(t *testing.T) {
+	db := newTempBoldMetaDB(t)
+	key := []byte("key")
+	metadata := []byte("test metadata")
+
+	err := db.AddMetadata(key, metadata)
+	if err != nil {
+		t.Error("failed to add metadata:", err)
+	}
+
+	if err := db.bdb.View(func(tx *bolt.Tx) error {
+		res := tx.Bucket(bucketMeta).Get(key)
+		if !reflect.DeepEqual(res, metadata) {
+			t.Errorf("expect %v, got %v", metadata, res)
+		}
+		return nil
+	}); err != nil {
+		t.Error("View returns an error:", err)
+	}
+}
+
+func TestBoltMetaDB_Metadata(t *testing.T) {
+	key := []byte("key")
+	metadata := []byte("test metadata")
+
+	cases := []struct {
+		name   string
+		init   func(*testing.T, MetaDB)
+		expect []byte
+		err    error
+	}{
+		{
+			name: "exist",
+			init: func(t *testing.T, db MetaDB) {
+				t.Helper()
+				err := db.AddMetadata(key, metadata)
+				if err != nil {
+					t.Error("failed to add metadata:", err)
+				}
+			},
+			expect: metadata,
+		},
+		{
+			name: "not found",
+			init: func(t *testing.T, db MetaDB) {},
+			err:  ErrKeyNotFound,
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			db := newTempBoldMetaDB(t)
+			c.init(t, db)
+
+			res, err := db.Metadata(key)
+			if !errors.Is(err, c.err) {
+				t.Errorf("expect %v , got %v", c.err, err)
+			}
+			if !reflect.DeepEqual(res, c.expect) {
+				t.Errorf("expect %v, got %v", c.expect, res)
+			}
+		})
+	}
+}
+
+func TestBoltMetaDB_DeleteMetadata(t *testing.T) {
+	db := newTempBoldMetaDB(t)
+	key := []byte("key")
+	metadata := []byte("test metadata")
+
+	err := db.AddMetadata(key, metadata)
+	if err != nil {
+		t.Error("failed to add metadata:", err)
+	}
+	err = db.DeleteMetadata(key)
+	if err != nil {
+		t.Error("failed to delete metadata: err")
+	}
+
+	if err := db.bdb.View(func(tx *bolt.Tx) error {
+		res := tx.Bucket(bucketMeta).Get(key)
+		if len(res) != 0 {
+			t.Error("removed metadata still exists")
+		}
+		return nil
+	}); err != nil {
+		t.Error("View returns an error:", err)
+	}
+}
+
+func TestBoltMetaDB_RenameMetadata(t *testing.T) {
+	db := newTempBoldMetaDB(t)
+	oldKey := []byte("key")
+	newKey := []byte("key2")
+	metadata := []byte("test metadata")
+
+	err := db.AddMetadata(oldKey, metadata)
+	if err != nil {
+		t.Error("failed to add metadata:", err)
+	}
+
+	err = db.RenameMetadata(oldKey, newKey)
+	if err != nil {
+		t.Error("failed to rename metadata:", err)
+	}
+
+	res, err := db.Metadata(newKey)
+	if err != nil {
+		t.Error("failed to get metadata:", err)
+	}
+	if !reflect.DeepEqual(res, metadata) {
+		t.Errorf("expect %v, got %v", metadata, res)
+	}
+}

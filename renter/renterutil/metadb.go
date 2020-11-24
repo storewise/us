@@ -60,6 +60,8 @@ type MetaDB interface {
 
 	AddMetadata(key, val []byte) error
 	Metadata(key []byte) ([]byte, error)
+	DeleteMetadata(key []byte) error
+	RenameMetadata(oldKey, newKey []byte) error
 
 	Close() error
 }
@@ -73,6 +75,8 @@ type EphemeralMetaDB struct {
 	meta   map[string]string
 	mu     sync.Mutex
 }
+
+var _ MetaDB = (*EphemeralMetaDB)(nil)
 
 // AddShard implements MetaDB.
 func (db *EphemeralMetaDB) AddShard(s DBShard) (uint64, error) {
@@ -246,6 +250,21 @@ func (db *EphemeralMetaDB) Metadata(key []byte) ([]byte, error) {
 	return []byte(md), nil
 }
 
+func (db *EphemeralMetaDB) DeleteMetadata(key []byte) error {
+	db.mu.Lock()
+	defer db.mu.Unlock()
+	delete(db.meta, string(key))
+	return nil
+}
+
+func (db *EphemeralMetaDB) RenameMetadata(oldKey, newKey []byte) error {
+	db.mu.Lock()
+	defer db.mu.Unlock()
+	db.meta[string(newKey)] = db.meta[string(oldKey)]
+	delete(db.meta, string(oldKey))
+	return nil
+}
+
 // Close implements MetaDB.
 func (db *EphemeralMetaDB) Close() error {
 	return nil
@@ -265,6 +284,8 @@ func NewEphemeralMetaDB() *EphemeralMetaDB {
 type BoltMetaDB struct {
 	bdb *bolt.DB
 }
+
+var _ MetaDB = (*BoltMetaDB)(nil)
 
 var (
 	bucketBlobs  = []byte("blobs")
@@ -489,23 +510,58 @@ func (db *BoltMetaDB) UnreferencedSectors() (map[hostdb.HostPublicKey][]crypto.H
 	return nil, nil // TODO
 }
 
-// AddMetadata implements MetaDB.
+// AddMetadata adds metadata that associated with the key.
 func (db *BoltMetaDB) AddMetadata(key, val []byte) error {
 	return db.bdb.Update(func(tx *bolt.Tx) error {
-		return tx.Bucket(bucketMeta).Put(key, val)
+		return db.addMetadata(tx, key, val)
 	})
 }
 
-// Metadata implements MetaDB.
+func (db *BoltMetaDB) addMetadata(tx *bolt.Tx, key, val []byte) error {
+	return tx.Bucket(bucketMeta).Put(key, val)
+}
+
+// Metadata returns metadata associated with the key.
 func (db *BoltMetaDB) Metadata(key []byte) (val []byte, err error) {
 	err = db.bdb.View(func(tx *bolt.Tx) error {
-		val = append(val, tx.Bucket(bucketMeta).Get(key)...)
-		return nil
+		val, err = db.metadata(tx, key)
+		return err
 	})
-	if err == nil && val == nil {
-		err = ErrKeyNotFound
-	}
 	return
+}
+
+func (db *BoltMetaDB) metadata(tx *bolt.Tx, key []byte) ([]byte, error) {
+	res := tx.Bucket(bucketMeta).Get(key)
+	if res == nil {
+		return nil, ErrKeyNotFound
+	}
+	return res, nil
+}
+
+// DeleteMetadata remove metadata associated with the given key.
+func (db *BoltMetaDB) DeleteMetadata(key []byte) error {
+	return db.bdb.Update(func(tx *bolt.Tx) error {
+		return db.deleteMetadata(tx, key)
+	})
+}
+
+func (db *BoltMetaDB) deleteMetadata(tx *bolt.Tx, key []byte) error {
+	return tx.Bucket(bucketMeta).Delete(key)
+}
+
+// RenameMetadata rename metadata.
+func (db *BoltMetaDB) RenameMetadata(oldKey, newKey []byte) error {
+	return db.bdb.Update(func(tx *bolt.Tx) error {
+		data, err := db.metadata(tx, oldKey)
+		if err != nil {
+			return err
+		}
+		err = db.addMetadata(tx, newKey, data)
+		if err != nil {
+			return err
+		}
+		return db.deleteMetadata(tx, oldKey)
+	})
 }
 
 // Close implements MetaDB.
