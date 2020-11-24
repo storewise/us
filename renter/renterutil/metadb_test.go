@@ -418,3 +418,28 @@ func TestBoltMetaDB_DeleteMetadata(t *testing.T) {
 		t.Error("View returns an error:", err)
 	}
 }
+
+func TestBoltMetaDB_RenameMetadata(t *testing.T) {
+	db := newTempBoldMetaDB(t)
+	oldKey := []byte("key")
+	newKey := []byte("key2")
+	metadata := []byte("test metadata")
+
+	err := db.AddMetadata(oldKey, metadata)
+	if err != nil {
+		t.Error("failed to add metadata:", err)
+	}
+
+	err = db.RenameMetadata(oldKey, newKey)
+	if err != nil {
+		t.Error("failed to rename metadata:", err)
+	}
+
+	res, err := db.Metadata(newKey)
+	if err != nil {
+		t.Error("failed to get metadata:", err)
+	}
+	if !reflect.DeepEqual(res, metadata) {
+		t.Errorf("expect %v, got %v", metadata, res)
+	}
+}
