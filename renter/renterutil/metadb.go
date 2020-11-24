@@ -60,7 +60,8 @@ type MetaDB interface {
 
 	AddMetadata(key, val []byte) error
 	Metadata(key []byte) ([]byte, error)
-
+	DeleteMetadata(key []byte) error
+	
 	Close() error
 }
 
@@ -73,6 +74,8 @@ type EphemeralMetaDB struct {
 	meta   map[string]string
 	mu     sync.Mutex
 }
+
+var _ MetaDB = (*EphemeralMetaDB)(nil)
 
 // AddShard implements MetaDB.
 func (db *EphemeralMetaDB) AddShard(s DBShard) (uint64, error) {
@@ -246,6 +249,13 @@ func (db *EphemeralMetaDB) Metadata(key []byte) ([]byte, error) {
 	return []byte(md), nil
 }
 
+func (db *EphemeralMetaDB) DeleteMetadata(key []byte) error {
+	db.mu.Lock()
+	defer db.mu.Unlock()
+	delete(db.meta, string(key))
+	return nil
+}
+
 // Close implements MetaDB.
 func (db *EphemeralMetaDB) Close() error {
 	return nil
@@ -265,6 +275,8 @@ func NewEphemeralMetaDB() *EphemeralMetaDB {
 type BoltMetaDB struct {
 	bdb *bolt.DB
 }
+
+var _ MetaDB = (*BoltMetaDB)(nil)
 
 var (
 	bucketBlobs  = []byte("blobs")
@@ -506,6 +518,13 @@ func (db *BoltMetaDB) Metadata(key []byte) (val []byte, err error) {
 		err = ErrKeyNotFound
 	}
 	return
+}
+
+// DeleteMetadata remove metadata associated with the given key.
+func (db *BoltMetaDB) DeleteMetadata(key []byte) error {
+	return db.bdb.Update(func(tx *bolt.Tx) error {
+		return tx.Bucket(bucketMeta).Delete(key)
+	})
 }
 
 // Close implements MetaDB.

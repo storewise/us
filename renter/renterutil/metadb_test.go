@@ -393,3 +393,28 @@ func TestBoltMetaDB_Metadata(t *testing.T) {
 		})
 	}
 }
+
+func TestBoltMetaDB_DeleteMetadata(t *testing.T) {
+	db := newTempBoldMetaDB(t)
+	key := []byte("key")
+	metadata := []byte("test metadata")
+
+	err := db.AddMetadata(key, metadata)
+	if err != nil {
+		t.Error("failed to add metadata:", err)
+	}
+	err = db.DeleteMetadata(key)
+	if err != nil {
+		t.Error("failed to delete metadata: err")
+	}
+
+	if err := db.bdb.View(func(tx *bolt.Tx) error {
+		res := tx.Bucket(bucketMeta).Get(key)
+		if len(res) != 0 {
+			t.Error("removed metadata still exists")
+		}
+		return nil
+	}); err != nil {
+		t.Error("View returns an error:", err)
+	}
+}
