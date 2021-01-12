@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"gitlab.com/NebulousLabs/Sia/crypto"
-	"gitlab.com/NebulousLabs/Sia/encoding"
+	"gitlab.com/NebulousLabs/encoding"
 	bolt "go.etcd.io/bbolt"
 	"lukechampine.com/us/hostdb"
 	"lukechampine.com/us/renter"
@@ -90,6 +90,9 @@ func (db *EphemeralMetaDB) AddShard(s DBShard) (uint64, error) {
 func (db *EphemeralMetaDB) Shard(id uint64) (DBShard, error) {
 	db.mu.Lock()
 	defer db.mu.Unlock()
+	if id == 0 {
+		return DBShard{}, ErrKeyNotFound
+	}
 	return db.shards[id-1], nil
 }
 
@@ -117,18 +120,18 @@ func (db *EphemeralMetaDB) SetChunkShard(id uint64, i int, s uint64) error {
 	return nil
 }
 
-func (db *EphemeralMetaDB) AddChunkAndShards(m int, length uint64, ss []*DBShard) (c DBChunk, err error) {
+func (db *EphemeralMetaDB) AddChunkAndShards(m int, length uint64, ss []*DBShard) (DBChunk, error) {
 	shards := make([]uint64, len(ss))
 	for i, s := range ss {
 		id, err := db.AddShard(*s)
 		if err != nil {
-			return c, err
+			return DBChunk{}, err
 		}
 		shards[i] = id
 	}
 	db.mu.Lock()
 	defer db.mu.Unlock()
-	c = DBChunk{
+	c := DBChunk{
 		ID:        uint64(len(db.chunks)) + 1,
 		Shards:    shards,
 		MinShards: uint8(m),

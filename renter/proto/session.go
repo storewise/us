@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"math"
 	"math/bits"
 	"net"
@@ -212,8 +213,10 @@ func (s *Session) sufficientFunds(price types.Currency) bool {
 // an active RPC; in this case, the RPC will return ErrInterrupted if it was
 // blocked on i/o.
 func (s *Session) Interrupt() {
-	atomic.SwapInt32(&s.interrupted, 1)
-	s.conn.Close()
+	atomic.StoreInt32(&s.interrupted, 1)
+	if err := s.conn.Close(); err != nil {
+		log.Println("failed to close a connection:", err)
+	}
 }
 
 // Lock calls the Lock RPC, locking the supplied contract and synchronizing its
@@ -335,6 +338,7 @@ func (s *Session) SectorRoots(offset, n int) (_ []crypto.Hash, err error) {
 	rev := s.rev.Revision
 	rev.NewRevisionNumber++
 	newValid, newMissed := updateRevisionOutputs(&rev, price, types.ZeroCurrency)
+	revisionHash := renterhost.HashRevision(rev)
 
 	s.extendBandwidthDeadline(renterhost.MinMessageSize, downloadBandwidth)
 	req := &renterhost.RPCSectorRootsRequest{
@@ -344,7 +348,7 @@ func (s *Session) SectorRoots(offset, n int) (_ []crypto.Hash, err error) {
 		NewRevisionNumber:    rev.NewRevisionNumber,
 		NewValidProofValues:  newValid,
 		NewMissedProofValues: newMissed,
-		Signature:            ed25519hash.Sign(s.key, renterhost.HashRevision(rev)),
+		Signature:            ed25519hash.Sign(s.key, revisionHash),
 	}
 	var resp renterhost.RPCSectorRootsResponse
 	if err := s.sess.WriteRequest(renterhost.RPCSectorRootsID, req); err != nil {
@@ -355,9 +359,16 @@ func (s *Session) SectorRoots(offset, n int) (_ []crypto.Hash, err error) {
 		rejectCtx := fmt.Sprintf("host rejected %v request", renterhost.RPCSectorRootsID)
 		return nil, wrapResponseErr(err, readCtx, rejectCtx)
 	}
+
+	// verify the host signature
+	if !ed25519hash.Verify(s.host.PublicKey.Ed25519(), revisionHash, resp.Signature) {
+		return nil, errors.New("host's signature is invalid")
+	}
 	s.rev.Revision = rev
 	s.rev.Signatures[0].Signature = req.Signature
 	s.rev.Signatures[1].Signature = resp.Signature
+
+	// verify the proof
 	if !merkle.VerifySectorRangeProof(resp.MerkleProof, resp.SectorRoots, offset, offset+n, s.rev.NumSectors(), rev.NewFileMerkleRoot) {
 		return nil, ErrInvalidMerkleProof
 	}
@@ -431,7 +442,8 @@ func (s *Session) Read(w io.Writer, sections []renterhost.RPCReadRequestSection)
 	rev := s.rev.Revision
 	rev.NewRevisionNumber++
 	newValid, newMissed := updateRevisionOutputs(&rev, price, types.ZeroCurrency)
-	renterSig := ed25519hash.Sign(s.key, renterhost.HashRevision(rev))
+	revisionHash := renterhost.HashRevision(rev)
+	renterSig := ed25519hash.Sign(s.key, revisionHash)
 
 	// send request
 	uploadBandwidth := 4096 + 4096*uint64(len(sections))
@@ -532,6 +544,10 @@ func (s *Session) Read(w io.Writer, sections []renterhost.RPCReadRequestSection)
 		hostSig = resp.Signature
 	}
 
+	// verify the host signature
+	if !ed25519hash.Verify(s.host.PublicKey.Ed25519(), revisionHash, hostSig) {
+		return errors.New("host's signature is invalid")
+	}
 	s.rev.Revision = rev
 	s.rev.Signatures[0].Signature = renterSig
 	s.rev.Signatures[1].Signature = hostSig
@@ -571,6 +587,9 @@ func (s *Session) Write(actions []renterhost.RPCWriteAction) (err error) {
 		default:
 			panic("unknown/unsupported action type")
 		}
+	}
+	if uploadBandwidth < renterhost.MinMessageSize {
+		uploadBandwidth = renterhost.MinMessageSize
 	}
 	var storagePrice, collateral types.Currency
 	if newFileSize > rev.NewFileSize {
@@ -663,8 +682,9 @@ func (s *Session) Write(actions []renterhost.RPCWriteAction) (err error) {
 	rev.NewRevisionNumber++
 	rev.NewFileSize = newFileSize
 	rev.NewFileMerkleRoot = newRoot
+	revisionHash := renterhost.HashRevision(rev)
 	renterSig := &renterhost.RPCWriteResponse{
-		Signature: ed25519hash.Sign(s.key, renterhost.HashRevision(rev)),
+		Signature: ed25519hash.Sign(s.key, revisionHash),
 	}
 	if err := s.sess.WriteResponse(renterSig, nil); err != nil {
 		return errors.Wrap(err, "couldn't write signature response")
@@ -674,6 +694,10 @@ func (s *Session) Write(actions []renterhost.RPCWriteAction) (err error) {
 		return wrapResponseErr(err, "couldn't read signature response", "host rejected Write signature")
 	}
 
+	// verify the host signature
+	if !ed25519hash.Verify(s.host.PublicKey.Ed25519(), revisionHash, hostSig.Signature) {
+		return errors.New("host's signature is invalid")
+	}
 	s.rev.Revision = rev
 	s.rev.Signatures[0].Signature = renterSig.Signature
 	s.rev.Signatures[1].Signature = hostSig.Signature

@@ -9,12 +9,12 @@ import (
 	"reflect"
 	"testing"
 
-	"lukechampine.com/us/renter"
-
 	"gitlab.com/NebulousLabs/Sia/crypto"
-	"gitlab.com/NebulousLabs/Sia/encoding"
+	"gitlab.com/NebulousLabs/encoding"
 	bolt "go.etcd.io/bbolt"
+
 	"lukechampine.com/us/hostdb"
+	"lukechampine.com/us/renter"
 )
 
 func newTempBoldMetaDB(t *testing.T) *BoltMetaDB {

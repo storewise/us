@@ -6,9 +6,11 @@ import (
 	"io/ioutil"
 	"testing"
 
+	"github.com/pkg/errors"
 	"gitlab.com/NebulousLabs/Sia/crypto"
 	"gitlab.com/NebulousLabs/Sia/types"
 	"gitlab.com/NebulousLabs/encoding"
+
 	"lukechampine.com/us/ghost"
 	"lukechampine.com/us/renterhost"
 )
@@ -20,8 +22,8 @@ func deepEqual(a, b interface{}) bool {
 type stubWallet struct{}
 
 func (stubWallet) Address() (_ types.UnlockHash, _ error) { return }
-func (stubWallet) FundTransaction(*types.Transaction, types.Currency) (_ []crypto.Hash, _ error) {
-	return
+func (stubWallet) FundTransaction(*types.Transaction, types.Currency) ([]crypto.Hash, func(), error) {
+	return nil, func() {}, nil
 }
 func (stubWallet) SignTransaction(txn *types.Transaction, toSign []crypto.Hash) error {
 	txn.TransactionSignatures = append(txn.TransactionSignatures, make([]types.TransactionSignature, len(toSign))...)
@@ -39,12 +41,9 @@ func (stubTpool) FeeEstimate() (_, _ types.Currency, _ error)                   
 func createTestingPair(tb testing.TB) (*Session, *ghost.Host) {
 	tb.Helper()
 
-	host, err := ghost.New(":0")
-	if err != nil {
-		tb.Fatal(err)
-	}
+	host := ghost.New(tb, ghost.FreeSettings, stubWallet{}, stubTpool{})
 
-	s, err := NewUnlockedSession(host.Settings().NetAddress, host.PublicKey(), 0)
+	s, err := NewUnlockedSession(host.Settings.NetAddress, host.PublicKey, 0)
 	if err != nil {
 		tb.Fatal(err)
 	}
@@ -53,12 +52,12 @@ func createTestingPair(tb testing.TB) (*Session, *ghost.Host) {
 	if err != nil {
 		tb.Fatal(err)
 	}
-	if !deepEqual(settings, host.Settings()) {
+	if !deepEqual(settings, host.Settings) {
 		tb.Fatal("received settings do not match host's actual settings")
 	}
 
 	key := ed25519.NewKeyFromSeed(make([]byte, ed25519.SeedSize))
-	rev, _, err := s.FormContract(stubWallet{}, stubTpool{}, key, types.ZeroCurrency, 0, 0)
+	rev, _, err := s.FormContract(stubWallet{}, stubTpool{}, key, types.ZeroCurrency, 0, 10)
 	if err != nil {
 		tb.Fatal(err)
 	}
@@ -90,7 +89,7 @@ func TestSession(t *testing.T) {
 	}
 	if len(tsr.stats) != 1 {
 		t.Fatal("no stats collected")
-	} else if stats := tsr.stats[0]; stats.Host != host.PublicKey() ||
+	} else if stats := tsr.stats[0]; stats.Host != host.PublicKey ||
 		stats.RPC != renterhost.RPCWriteID ||
 		stats.Uploaded == 0 || stats.Downloaded == 0 {
 		t.Fatal("bad stats:", stats)
@@ -104,7 +103,7 @@ func TestSession(t *testing.T) {
 	}
 	if len(tsr.stats) != 2 {
 		t.Fatal("no stats collected")
-	} else if stats := tsr.stats[1]; stats.Host != host.PublicKey() ||
+	} else if stats := tsr.stats[1]; stats.Host != host.PublicKey ||
 		stats.RPC != renterhost.RPCSectorRootsID ||
 		stats.Uploaded == 0 || stats.Downloaded == 0 {
 		t.Fatal("bad stats:", stats)
@@ -124,7 +123,7 @@ func TestSession(t *testing.T) {
 	}
 	if len(tsr.stats) != 3 {
 		t.Fatal("no stats collected")
-	} else if stats := tsr.stats[2]; stats.Host != host.PublicKey() ||
+	} else if stats := tsr.stats[2]; stats.Host != host.PublicKey ||
 		stats.RPC != renterhost.RPCReadID ||
 		stats.Uploaded == 0 || stats.Downloaded == 0 {
 		t.Fatal("bad stats:", stats)
@@ -136,7 +135,7 @@ func TestSession(t *testing.T) {
 	}
 	if len(tsr.stats) != 4 {
 		t.Fatal("no stats collected")
-	} else if stats := tsr.stats[3]; stats.Host != host.PublicKey() ||
+	} else if stats := tsr.stats[3]; stats.Host != host.PublicKey ||
 		stats.RPC != renterhost.RPCUnlockID ||
 		stats.Uploaded == 0 || stats.Downloaded != 0 {
 		t.Fatal("bad stats:", stats)
@@ -154,7 +153,7 @@ func TestRenew(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	newContract, _, err := renter.RenewContract(stubWallet{}, stubTpool{}, types.ZeroCurrency, 0, 0)
+	newContract, _, err := renter.RenewContract(stubWallet{}, stubTpool{}, types.ZeroCurrency, 5, 20)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -169,17 +168,17 @@ func TestRenew(t *testing.T) {
 		t.Fatal("expected error, got nil")
 	}
 	oldID, oldKey := renter.Revision().ID(), renter.key
-	renter, err = NewUnlockedSession(host.Settings().NetAddress, host.PublicKey(), 0)
+	renter, err = NewUnlockedSession(host.Settings.NetAddress, host.PublicKey, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	// attempting to lock the old contract should cause an error
-	err = renter.Lock(oldID, oldKey, 0)
-	if err == ErrContractFinalized {
+	// attempting to lock the old contract should return ErrContractFinalized
+	if err := renter.Lock(oldID, oldKey, 0); errors.Cause(err) != ErrContractFinalized {
 		t.Fatal("expected ErrContractFinalized, got", err)
 	}
-	renter, err = NewUnlockedSession(host.Settings().NetAddress, host.PublicKey(), 0)
+	renter.Close()
+	renter, err = NewUnlockedSession(host.Settings.NetAddress, host.PublicKey, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
