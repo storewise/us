@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"testing"
 	"testing/iotest"
 	"time"
@@ -19,16 +20,16 @@ import (
 	"lukechampine.com/us/renterhost"
 )
 
-func createTestingKV(tb testing.TB, m, n int) (PseudoKV, func()) {
+func createTestingKV(tb testing.TB, numHosts, m, n int) PseudoKV {
 	tb.Helper()
-	hosts := make([]*ghost.Host, n)
+	hosts := make([]*ghost.Host, numHosts)
 	hkr := make(testHKR)
 	hs := NewHostSet(hkr, 0)
 	var cleanups []func()
 	for i := range hosts {
 		h, c := createHostWithContract(tb)
 		hosts[i] = h
-		hkr[h.PublicKey()] = h.Settings().NetAddress
+		hkr[h.PublicKey] = h.Settings.NetAddress
 		hs.AddHost(c)
 		cleanups = append(cleanups, func() { h.Close() })
 	}
@@ -43,7 +44,7 @@ func createTestingKV(tb testing.TB, m, n int) (PseudoKV, func()) {
 			tb.Fatal(err)
 		}
 		os.MkdirAll(dir, 0700)
-		cleanups = append(cleanups, func() { os.RemoveAll(dir) })
+		tb.Cleanup(func() { os.RemoveAll(dir) })
 		dbName := filepath.Join(dir, "kv.db")
 		db, err = NewBoltMetaDB(dbName)
 		if err != nil {
@@ -59,20 +60,15 @@ func createTestingKV(tb testing.TB, m, n int) (PseudoKV, func()) {
 		Downloader: ParallelChunkDownloader{Hosts: hs},
 		Deleter:    SerialSectorDeleter{Hosts: hs},
 	}
-	cleanups = append(cleanups, func() { kv.Close() })
+	tb.Cleanup(func() { kv.Close() })
 
-	return kv, func() {
-		for _, fn := range cleanups {
-			fn()
-		}
-	}
+	return kv
 }
 
 func TestKVPutGet(t *testing.T) {
-	kv, cleanup := createTestingKV(t, 2, 3)
-	defer cleanup()
-
 	ctx := context.Background()
+	kv := createTestingKV(t, 3, 2, 3)
+
 	err := kv.PutBytes(ctx, []byte("foo"), []byte("bar"))
 	if err != nil {
 		t.Fatal(err)
@@ -113,11 +109,9 @@ func TestKVPutGet(t *testing.T) {
 }
 
 func TestKVBufferHosts(t *testing.T) {
-	kv, cleanup := createTestingKV(t, 0, 6)
-	defer cleanup()
-	kv.M, kv.N = 2, 3 // 3 buffer hosts
-
 	ctx := context.Background()
+	kv := createTestingKV(t, 6, 2, 3) // 3 buffer hosts
+
 	bigdata := frand.Bytes(renterhost.SectorSize * 6)
 	err := kv.Put(ctx, []byte("foo"), bytes.NewReader(bigdata))
 	if err != nil {
@@ -163,10 +157,9 @@ func TestKVBufferHosts(t *testing.T) {
 }
 
 func TestKVResumeReader(t *testing.T) {
-	kv, cleanup := createTestingKV(t, 2, 3)
-	defer cleanup()
-
 	ctx := context.Background()
+	kv := createTestingKV(t, 3, 2, 3)
+
 	bigdata := frand.Bytes(renterhost.SectorSize * 4)
 	r := bytes.NewReader(bigdata)
 	err := kv.Put(ctx, []byte("foo"), &errorAfterNReader{
@@ -209,7 +202,7 @@ func TestKVResumeHost(t *testing.T) {
 		h, c := createHostWithContract(t)
 		defer h.Close()
 		hosts[i] = h
-		hkr[h.PublicKey()] = h.Settings().NetAddress
+		hkr[h.PublicKey] = h.Settings.NetAddress
 		hs.AddHost(c)
 	}
 	db := NewEphemeralMetaDB()
@@ -230,12 +223,12 @@ func TestKVResumeHost(t *testing.T) {
 		N: renterhost.SectorSize * 2,
 		Fn: func() {
 			hosts[1].Close()
-			s, err := hs.acquire(hosts[1].PublicKey())
+			s, err := hs.acquire(hosts[1].PublicKey)
 			if err != nil {
 				return
 			}
 			s.Close()
-			hs.release(hosts[1].PublicKey())
+			hs.release(hosts[1].PublicKey)
 		},
 	})
 	if err == nil {
@@ -245,8 +238,8 @@ func TestKVResumeHost(t *testing.T) {
 	// replace host 0 with a new host
 	h, c := createHostWithContract(t)
 	defer h.Close()
-	hkr[h.PublicKey()] = h.Settings().NetAddress
-	delete(hs.sessions, hosts[1].PublicKey())
+	hkr[h.PublicKey] = h.Settings.NetAddress
+	delete(hs.sessions, hosts[1].PublicKey)
 	hs.AddHost(c)
 
 	// resume
@@ -268,18 +261,16 @@ func TestKVResumeHost(t *testing.T) {
 }
 
 func TestKVUpdate(t *testing.T) {
-	kv, cleanup := createTestingKV(t, 2, 3)
-	defer cleanup()
-
 	ctx := context.Background()
+	kv := createTestingKV(t, 3, 2, 3)
+
 	bigdata := frand.Bytes(renterhost.SectorSize * 4)
 	err := kv.PutBytes(ctx, []byte("foo"), bigdata)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	kv2, cleanup2 := createTestingKV(t, 3, 4)
-	defer cleanup2()
+	kv2 := createTestingKV(t, 4, 3, 4)
 	gcu := GenericChunkUpdater{
 		D: kv.Downloader,
 		U: kv2.Uploader,
@@ -307,10 +298,9 @@ func TestKVUpdate(t *testing.T) {
 }
 
 func TestKVMigrate(t *testing.T) {
-	kv, cleanup := createTestingKV(t, 2, 3)
-	defer cleanup()
-
 	ctx := context.Background()
+	kv := createTestingKV(t, 3, 2, 3)
+
 	bigdata := frand.Bytes(renterhost.SectorSize * 4)
 	err := kv.PutBytes(ctx, []byte("foo"), bigdata)
 	if err != nil {
@@ -328,7 +318,7 @@ func TestKVMigrate(t *testing.T) {
 	}
 	h, c := createHostWithContract(t)
 	defer h.Close()
-	hs.hkr.(testHKR)[h.PublicKey()] = h.Settings().NetAddress
+	hs.hkr.(testHKR)[h.PublicKey] = h.Settings.NetAddress
 	hs.AddHost(c)
 
 	// migrate
@@ -346,10 +336,9 @@ func TestKVMigrate(t *testing.T) {
 }
 
 func TestKVGC(t *testing.T) {
-	kv, cleanup := createTestingKV(t, 2, 3)
-	defer cleanup()
-
 	ctx := context.Background()
+	kv := createTestingKV(t, 3, 2, 3)
+
 	bigdata := frand.Bytes(renterhost.SectorSize * 4)
 	err := kv.PutBytes(ctx, []byte("foo"), bigdata)
 	if err != nil {
@@ -373,8 +362,7 @@ func TestKVPutGetParallel(t *testing.T) {
 		t.SkipNow()
 	}
 	ctx := context.Background()
-	kv, cleanup := createTestingKV(t, 2, 3)
-	defer cleanup()
+	kv := createTestingKV(t, 6, 2, 3)
 	hs := kv.Uploader.(ParallelChunkUploader).Hosts
 	kv.Uploader = ParallelChunkUploader{Hosts: hs}
 	kv.Downloader = ParallelChunkDownloader{Hosts: hs}
@@ -448,12 +436,11 @@ func TestKVPutGetParallel(t *testing.T) {
 }
 
 func TestKVMinimumAvailability(t *testing.T) {
-	kv, cleanup := createTestingKV(t, 1, 3)
-	defer cleanup()
+	ctx := context.Background()
+	kv := createTestingKV(t, 3, 1, 3)
 	hs := kv.Uploader.(ParallelChunkUploader).Hosts
 	kv.Uploader = MinimumChunkUploader{Hosts: hs}
 
-	ctx := context.Background()
 	bigdata := frand.Bytes(renterhost.SectorSize * 4)
 	err := kv.Put(ctx, []byte("foo"), bytes.NewReader(bigdata))
 	if err != nil {
@@ -495,12 +482,19 @@ func TestKVMinimumAvailability(t *testing.T) {
 }
 
 func wasCanceled(err error) bool {
+	var he *HostError
+	if errors.As(err, &he) {
+		return wasCanceled(he.Err)
+	}
+	var hes HostErrorSet
+	if errors.As(err, &hes) {
+		return wasCanceled(hes[0].Err)
+	}
 	return errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)
 }
 
 func TestKVCancel(t *testing.T) {
-	kv, cleanup := createTestingKV(t, 2, 3)
-	defer cleanup()
+	kv := createTestingKV(t, 3, 2, 3)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
@@ -514,12 +508,12 @@ func TestKVCancel(t *testing.T) {
 		t.Fatal(err)
 	}
 	cancel()
-	data, err := kv.GetBytes(ctx, []byte("foo"))
+	_, err = kv.GetBytes(ctx, []byte("foo"))
 	if !wasCanceled(err) {
 		t.Fatal("expected cancel, got", err)
 	}
 	ctx = context.Background()
-	data, err = kv.GetBytes(ctx, []byte("foo"))
+	data, err := kv.GetBytes(ctx, []byte("foo"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -559,7 +553,24 @@ func TestKVCancel(t *testing.T) {
 }
 
 func TestKVBuffering(t *testing.T) {
-	t.Skip("TODO: store multiple values in one sector")
+	kv := createTestingKV(t, 3, 2, 3)
+	sbb := kv.NewSmallBlobBuffer()
+	keys := []string{"foo", "bar", "baz"}
+	for _, k := range keys {
+		sbb.AddBlob([]byte(k), []byte(k+strings.Repeat("_val", 20)))
+	}
+	ctx := context.Background()
+	err := sbb.Upload(ctx, kv.Uploader.(ParallelChunkUploader).Hosts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, k := range keys {
+		if data, err := kv.GetBytes(ctx, []byte(k)); err != nil {
+			t.Fatal(err)
+		} else if string(data) != k+strings.Repeat("_val", 20) {
+			t.Fatalf("bad data: %q", data)
+		}
+	}
 }
 
 type errorAfterNReader struct {
@@ -604,11 +615,10 @@ func (fnr *fnAfterNReader) Read(p []byte) (int, error) {
 }
 
 func BenchmarkKVPut(b *testing.B) {
-	kv, cleanup := createTestingKV(b, 2, 3)
-	defer cleanup()
+	ctx := context.Background()
+	kv := createTestingKV(b, 3, 2, 3)
 	data := frand.Bytes(renterhost.SectorSize * 2)
 
-	ctx := context.Background()
 	b.ResetTimer()
 	b.SetBytes(int64(len(data)))
 	b.ReportAllocs()
@@ -621,9 +631,8 @@ func BenchmarkKVPut(b *testing.B) {
 }
 
 func BenchmarkKVGet(b *testing.B) {
-	kv, cleanup := createTestingKV(b, 2, 3)
-	defer cleanup()
 	ctx := context.Background()
+	kv := createTestingKV(b, 3, 2, 3)
 	data := frand.Bytes(renterhost.SectorSize * 2)
 	err := kv.PutBytes(ctx, []byte("foo"), data)
 	if err != nil {
@@ -642,11 +651,10 @@ func BenchmarkKVGet(b *testing.B) {
 }
 
 func BenchmarkKVPutParallel(b *testing.B) {
-	kv, cleanup := createTestingKV(b, 2, 3)
-	defer cleanup()
+	ctx := context.Background()
+	kv := createTestingKV(b, 3, 2, 3)
 	data := frand.Bytes(renterhost.SectorSize * 2)
 
-	ctx := context.Background()
 	b.ResetTimer()
 	b.SetBytes(int64(len(data)))
 	b.ReportAllocs()
@@ -672,9 +680,8 @@ func BenchmarkKVPutParallel(b *testing.B) {
 }
 
 func BenchmarkKVGetParallel(b *testing.B) {
-	kv, cleanup := createTestingKV(b, 2, 3)
-	defer cleanup()
 	ctx := context.Background()
+	kv := createTestingKV(b, 3, 2, 3)
 	data := frand.Bytes(renterhost.SectorSize * 2)
 	err := kv.PutBytes(ctx, []byte("foo"), data)
 	if err != nil {

@@ -8,8 +8,8 @@ import (
 type StubWallet struct{}
 
 func (StubWallet) Address() (_ types.UnlockHash, _ error) { return }
-func (StubWallet) FundTransaction(*types.Transaction, types.Currency) (_ []crypto.Hash, _ error) {
-	return
+func (StubWallet) FundTransaction(*types.Transaction, types.Currency) ([]crypto.Hash, func(), error) {
+	return nil, func() {}, nil
 }
 func (StubWallet) SignTransaction(txn *types.Transaction, toSign []crypto.Hash) error {
 	txn.TransactionSignatures = append(txn.TransactionSignatures, make([]types.TransactionSignature, len(toSign))...)

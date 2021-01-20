@@ -11,7 +11,10 @@ jobs:
     steps:
       - checkout
       - go/mod-download-cached
-      - go/test
+      - go/test:
+          covermode: atomic
+          race: true
+          verbose: true
 workflows:
   build:
     jobs:
