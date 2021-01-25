@@ -452,11 +452,16 @@ func (ocu OverdriveChunkUploader) UploadChunk(ctx context.Context, db MetaDB, c 
 	if numWorkers > len(newHosts) {
 		numWorkers = len(newHosts)
 	}
+	type sector struct {
+		ctx    context.Context
+		cancel context.CancelFunc
+		shard  *[renterhost.SectorSize]byte
+		nonce  [24]byte
+	}
 	type req struct {
+		*sector
 		shardIndex int
 		hostKey    hostdb.HostPublicKey
-		shard      *[renterhost.SectorSize]byte
-		nonce      [24]byte
 		block      bool // wait to acquire
 	}
 	type resp struct {
@@ -487,45 +492,53 @@ func (ocu OverdriveChunkUploader) UploadChunk(ctx context.Context, db MetaDB, c 
 					respChan <- resp{req, crypto.Hash{}, err}
 					continue
 				}
-				root, err := uploadCtx(ctx, sess, req.shard)
+				root, err := uploadCtx(req.ctx, sess, req.shard)
 				ocu.Hosts.release(req.hostKey)
 				if err != nil {
 					respChan <- resp{req, crypto.Hash{}, err}
 					continue
 				}
+				req.cancel()
 				respChan <- resp{req, root, err}
 			}
 		}()
 	}
 
 	// construct sectors
-	sectors := make([]*[renterhost.SectorSize]byte, len(c.Shards))
-	nonces := make([][24]byte, len(sectors))
+	sectors := make([]*sector, len(c.Shards))
 	for i, shard := range shards {
 		if skip[i] {
 			continue
 		}
-		nonces[i] = renter.RandomNonce()
 		var sb renter.SectorBuilder
-		sb.Append(shard, key, nonces[i])
-		sectors[i] = sb.Finish()
+		nonce := renter.RandomNonce()
+		sb.Append(shard, key, nonce)
+
+		ctx, cancel := context.WithCancel(ctx)
+		sectors[i] = &sector{
+			ctx:    ctx,
+			cancel: cancel,
+			shard:  sb.Finish(),
+			nonce:  nonce,
+		}
 	}
 
 	// start by requesting one upload per worker, all non-blocking.
 	var reqQueue []req
+	success := make([]bool, len(c.Shards))
 	i := 0
 	for h := range newHosts {
 	again:
 		shardIndex := i % len(c.Shards)
 		i++
 		if skip[shardIndex] {
+			success[shardIndex] = true
 			goto again
 		}
 		reqQueue = append(reqQueue, req{
+			sector:     sectors[shardIndex],
 			shardIndex: shardIndex,
 			hostKey:    h,
-			shard:      sectors[shardIndex],
-			nonce:      nonces[shardIndex],
 			block:      false,
 		})
 	}
@@ -537,15 +550,29 @@ func (ocu OverdriveChunkUploader) UploadChunk(ctx context.Context, db MetaDB, c 
 
 	// for those that return errors, add the next host to the queue, non-blocking.
 	// for those that block, add the same host to the queue, blocking.
-	success := make([]bool, len(c.Shards))
 	var errs HostErrorSet
 	for rem > 0 && inflight > 0 {
 		resp := <-respChan
 		inflight--
-		if resp.err == nil {
-			if success[resp.req.shardIndex] {
-				continue // an earlier worker already succeeded
+
+		if success[resp.req.shardIndex] {
+			// an earlier worker already succeeded
+			for i, v := range success {
+				if !v {
+					reqChan <- req{
+						sector:     sectors[i],
+						shardIndex: i,
+						hostKey:    resp.req.hostKey,
+						block:      false,
+					}
+					inflight++
+					break
+				}
 			}
+			continue
+		}
+
+		if resp.err == nil {
 			// NOTE: in theory, we could attempt to continue storing the
 			// remaining successful shards, but in practice, if
 			// SetChunkShard fails, it indicates a serious problem with the
@@ -576,7 +603,7 @@ func (ocu OverdriveChunkUploader) UploadChunk(ctx context.Context, db MetaDB, c 
 		}
 	}
 	if rem > 0 {
-		return fmt.Errorf("could not upload to enough hosts: %w", errs)
+		return errors.Wrap(errs, "could not upload to enough hosts")
 	}
 	return nil
 }
