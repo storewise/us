@@ -7,9 +7,11 @@ import (
 	"sync"
 	"time"
 
+	"github.com/hashicorp/go-multierror"
 	"gitlab.com/NebulousLabs/Sia/crypto"
 	"gitlab.com/NebulousLabs/encoding"
 	bolt "go.etcd.io/bbolt"
+
 	"lukechampine.com/us/hostdb"
 	"lukechampine.com/us/renter"
 )
@@ -473,25 +475,30 @@ func (db *BoltMetaDB) DeleteBlob(key []byte) (map[hostdb.HostPublicKey][]crypto.
 			return err
 		}
 		for _, cid := range blob.Chunks {
-			chunk, err := db.chunk(tx, cid)
-			if err != nil {
-				return err
+			chunk, e := db.chunk(tx, cid)
+			if e != nil {
+				err = multierror.Append(err, e)
+				continue
 			}
 			for _, sid := range chunk.Shards {
-				shard, err := db.shard(tx, sid)
-				if err != nil {
-					return err
+				shard, e := db.shard(tx, sid)
+				if e != nil {
+					err = multierror.Append(err, e)
+					continue
 				}
 				sectors[shard.HostKey] = append(sectors[shard.HostKey], shard.SectorRoot)
-				if err := db.deleteShard(tx, sid); err != nil {
-					return err
+				if e = db.deleteShard(tx, sid); e != nil {
+					err = multierror.Append(err, e)
 				}
 			}
-			if err := db.deleteChunk(tx, cid); err != nil {
-				return err
+			if e = db.deleteChunk(tx, cid); e != nil {
+				err = multierror.Append(err, e)
 			}
 		}
-		return tx.Bucket(bucketBlobs).Delete(key)
+		if e := tx.Bucket(bucketBlobs).Delete(key); e != nil {
+			err = multierror.Append(err, e)
+		}
+		return err
 	}); err != nil {
 		return nil, err
 	}
