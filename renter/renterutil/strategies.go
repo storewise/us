@@ -3,14 +3,15 @@ package renterutil
 import (
 	"bytes"
 	"context"
-	"errors"
 	"fmt"
 	"io"
 	"sync"
 
+	"github.com/hashicorp/go-multierror"
+	"github.com/pkg/errors"
 	"gitlab.com/NebulousLabs/Sia/crypto"
-
 	"lukechampine.com/frand"
+
 	"lukechampine.com/us/hostdb"
 	"lukechampine.com/us/merkle"
 	"lukechampine.com/us/renter"
@@ -1019,8 +1020,10 @@ type ParallelBlobUploader struct {
 	P    int // degree of parallelism
 }
 
+var _ BlobUploader = (*ParallelBlobUploader)(nil)
+
 // UploadBlob implements BlobUploader.
-func (pbu ParallelBlobUploader) UploadBlob(ctx context.Context, db MetaDB, b DBBlob, r io.Reader) error {
+func (pbu ParallelBlobUploader) UploadBlob(ctx context.Context, db MetaDB, b DBBlob, r io.Reader) (err error) {
 	// spawn p workers
 	type req struct {
 		c      DBChunk
@@ -1032,7 +1035,6 @@ func (pbu ParallelBlobUploader) UploadBlob(ctx context.Context, db MetaDB, b DBB
 	defer wg.Wait()
 
 	ctx, cancel := context.WithCancel(ctx)
-	defer cancel()
 
 	for i := 0; i < pbu.P; i++ {
 		wg.Add(1)
@@ -1060,10 +1062,14 @@ func (pbu ParallelBlobUploader) UploadBlob(ctx context.Context, db MetaDB, b DBB
 	}
 	defer func() {
 		for inflight > 0 {
-			_ = consumeResp()
+			if e := consumeResp(); e != nil {
+				err = multierror.Append(err, e)
+			}
 		}
 		close(reqChan)
 	}()
+
+	defer cancel()
 
 	// read+encode chunks, add to db, send requests to workers
 	rsc := renter.NewRSCode(pbu.M, pbu.N)
