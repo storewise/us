@@ -167,7 +167,7 @@ func TestKVResumeReader(t *testing.T) {
 		N:   renterhost.SectorSize * 3,
 		Err: iotest.ErrTimeout, // arbitrary
 	})
-	if err != iotest.ErrTimeout {
+	if !errors.Is(err, iotest.ErrTimeout) {
 		t.Fatal(err)
 	}
 
