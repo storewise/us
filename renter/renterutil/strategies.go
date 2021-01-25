@@ -982,6 +982,8 @@ type SerialBlobUploader struct {
 	M, N int
 }
 
+var _ BlobUploader = (*SerialBlobUploader)(nil)
+
 // UploadBlob implements BlobUploader.
 func (sbu SerialBlobUploader) UploadBlob(ctx context.Context, db MetaDB, b DBBlob, r io.Reader) error {
 	rsc := renter.NewRSCode(sbu.M, sbu.N)
@@ -1007,7 +1009,7 @@ func (sbu SerialBlobUploader) UploadBlob(ctx context.Context, db MetaDB, b DBBlo
 			return err
 		}
 		if err := sbu.U.UploadChunk(ctx, db, c, b.Seed, shards); err != nil {
-			return err
+			return errors.Wrap(err, "failed to upload a chunk")
 		}
 	}
 	return nil
