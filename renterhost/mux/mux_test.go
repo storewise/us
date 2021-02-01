@@ -10,6 +10,7 @@ import (
 	"math"
 	"net"
 	"os"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -301,6 +302,10 @@ func TestDeadline(t *testing.T) {
 }
 
 func TestCompatibility(t *testing.T) {
+	if strings.ToLower(os.Getenv("CI")) == "true" {
+		t.Skip()
+	}
+
 	sk, pk := mux.GenerateED25519KeyPair()
 	l, err := net.Listen("tcp", ":0")
 	if err != nil {
