@@ -55,7 +55,8 @@ func createTestingKV(tb testing.TB, numHosts, m, n int) PseudoKV {
 		DB:         db,
 		M:          m,
 		N:          n,
-		P:          3, // TODO: is this a sane default?
+		UP:         3, // TODO: is this a sane default?
+		DP:         3, // TODO: is this a sane default?
 		Uploader:   ParallelChunkUploader{Hosts: hs},
 		Downloader: ParallelChunkDownloader{Hosts: hs},
 		Deleter:    SerialSectorDeleter{Hosts: hs},
@@ -207,11 +208,11 @@ func TestKVResumeHost(t *testing.T) {
 	}
 	db := NewEphemeralMetaDB()
 	kv := PseudoKV{
-		DB: db,
-		M:  2,
-		N:  3,
-		P:  2,
-
+		DB:         db,
+		M:          2,
+		N:          3,
+		UP:         2,
+		DP:         2,
 		Uploader:   ParallelChunkUploader{Hosts: hs},
 		Downloader: SerialChunkDownloader{Hosts: hs},
 	}

@@ -17,11 +17,11 @@ import (
 // PseudoKV implements a key-value store by uploading and downloading data from Sia
 // hosts.
 type PseudoKV struct {
-	DB         MetaDB
-	M, N, P    int
-	Uploader   ChunkUploader
-	Downloader ChunkDownloader
-	Deleter    SectorDeleter
+	DB           MetaDB
+	M, N, UP, DP int
+	Uploader     ChunkUploader
+	Downloader   ChunkDownloader
+	Deleter      SectorDeleter
 }
 
 // Put uploads r to hosts and associates it with the specified key. Any existing
@@ -33,7 +33,7 @@ func (kv PseudoKV) Put(ctx context.Context, key []byte, r io.Reader) error {
 		return err
 	}
 	var bu BlobUploader
-	if kv.P == 1 {
+	if kv.UP <= 1 {
 		bu = SerialBlobUploader{
 			U: kv.Uploader,
 			M: kv.M,
@@ -44,7 +44,7 @@ func (kv PseudoKV) Put(ctx context.Context, key []byte, r io.Reader) error {
 			U: kv.Uploader,
 			M: kv.M,
 			N: kv.N,
-			P: kv.P,
+			P: kv.UP,
 		}
 	}
 	return bu.UploadBlob(ctx, kv.DB, b, r)
@@ -87,11 +87,20 @@ func (kv PseudoKV) Resume(ctx context.Context, key []byte, rs io.ReadSeeker) err
 		return err
 	}
 
-	bu := ParallelBlobUploader{
-		U: kv.Uploader,
-		M: kv.M,
-		N: kv.N,
-		P: kv.P,
+	var bu BlobUploader
+	if kv.UP <= 1 {
+		bu = SerialBlobUploader{
+			U: kv.Uploader,
+			M: kv.M,
+			N: kv.N,
+		}
+	} else {
+		bu = ParallelBlobUploader{
+			U: kv.Uploader,
+			M: kv.M,
+			N: kv.N,
+			P: kv.UP,
+		}
 	}
 	return bu.UploadBlob(ctx, kv.DB, b, rs)
 }
@@ -104,14 +113,14 @@ func (kv PseudoKV) GetRange(ctx context.Context, key []byte, w io.Writer, off, n
 		return err
 	}
 	var bd BlobDownloader
-	if kv.P == 1 {
+	if kv.DP == 1 {
 		bd = SerialBlobDownloader{
 			D: kv.Downloader,
 		}
 	} else {
 		bd = ParallelBlobDownloader{
 			D: kv.Downloader,
-			P: kv.P,
+			P: kv.DP,
 		}
 	}
 	return bd.DownloadBlob(ctx, kv.DB, b, w, off, n)
