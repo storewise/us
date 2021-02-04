@@ -78,7 +78,7 @@ func (c *SiadClient) Address() (types.UnlockHash, error) {
 // private keys known to the wallet.
 func (c *SiadClient) FundTransaction(txn *types.Transaction, amount types.Currency) ([]crypto.Hash, func(), error) {
 	if amount.IsZero() {
-		return nil, nil, nil
+		return nil, func() {}, nil
 	}
 
 	wug, err := c.siad.WalletUnspentGet()

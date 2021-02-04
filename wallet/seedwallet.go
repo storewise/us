@@ -265,7 +265,7 @@ func (w *HotWallet) FundTransaction(txn *types.Transaction, amount types.Currenc
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	if amount.IsZero() {
-		return nil, nil, nil
+		return nil, func() {}, nil
 	}
 	// UnspentOutputs(true) returns the outputs that exist after Limbo
 	// transactions are applied. This is not ideal, because the transactions
@@ -354,6 +354,10 @@ func (w *HotWallet) FundTransaction(txn *types.Transaction, amount types.Currenc
 			Value:      change,
 		})
 	}
+
+	for _, o := range fundingOutputs {
+		w.used[o.ID] = struct{}{}
+	}
 	discard := func() {
 		w.mu.Lock()
 		defer w.mu.Unlock()
@@ -415,7 +419,7 @@ func (w *HotWallet) SignTransaction(txn *types.Transaction, toSign []crypto.Hash
 			return errors.New("can't sign")
 		}
 		sk := w.seed.SecretKey(info.KeyIndex)
-		txn.TransactionSignatures[i].Signature = ed25519hash.Sign(sk, txn.SigHash(i, types.ASICHardforkHeight+1))
+		txn.TransactionSignatures[i].Signature = ed25519hash.Sign(sk, txn.SigHash(i, types.FoundationHardforkHeight+1))
 		return nil
 	}
 
@@ -434,7 +438,7 @@ outer:
 	return nil
 }
 
-// NewHotWallet intializes a HotWallet using the provided wallet and seed.
+// NewHotWallet initializes a HotWallet using the provided wallet and seed.
 func NewHotWallet(sw *SeedWallet, seed Seed) *HotWallet {
 	return &HotWallet{
 		SeedWallet: sw,
