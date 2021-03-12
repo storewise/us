@@ -149,11 +149,7 @@ func (kv *PseudoKV) Update(ctx context.Context, key []byte, bu BlobUpdater) erro
 
 // Migrate updates an existing key, migrating each each of its chunks to the
 // provided HostSet.
-func (kv *PseudoKV) Migrate(ctx context.Context, key []byte, hosts *HostSet) error {
-	whitelist := make([]hostdb.HostPublicKey, 0, len(hosts.sessions))
-	for hostKey := range hosts.sessions {
-		whitelist = append(whitelist, hostKey)
-	}
+func (kv *PseudoKV) Migrate(ctx context.Context, key []byte, whitelist []hostdb.HostPublicKey) error {
 	return kv.Update(ctx, key, SerialBlobUpdater{
 		U: GenericChunkUpdater{
 			D:            kv.Downloader,

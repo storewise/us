@@ -17,6 +17,7 @@ import (
 
 	"lukechampine.com/frand"
 	"lukechampine.com/us/ghost"
+	"lukechampine.com/us/hostdb"
 	"lukechampine.com/us/renterhost"
 )
 
@@ -323,7 +324,11 @@ func TestKVMigrate(t *testing.T) {
 	hs.AddHost(c)
 
 	// migrate
-	err = kv.Migrate(ctx, []byte("foo"), hs)
+	whitelist := make([]hostdb.HostPublicKey, 0, len(hs.sessions))
+	for hostKey := range hs.sessions {
+		whitelist = append(whitelist, hostKey)
+	}
+	err = kv.Migrate(ctx, []byte("foo"), whitelist)
 	if err != nil {
 		t.Fatal(err)
 	}
