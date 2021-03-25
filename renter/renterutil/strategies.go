@@ -19,6 +19,8 @@ import (
 	"lukechampine.com/us/renterhost"
 )
 
+var errMigrationSkipped = errors.New("migration is skipped")
+
 func uploadCtx(ctx context.Context, sess *proto.Session, shard *[renterhost.SectorSize]byte) (root crypto.Hash, err error) {
 	if ctx.Err() != nil {
 		return crypto.Hash{}, ctx.Err()
@@ -914,7 +916,7 @@ func (gcu GenericChunkUpdater) UpdateChunk(ctx context.Context, db MetaDB, b DBB
 		if err != nil {
 			return 0, err
 		} else if !shouldUpdate {
-			return c.ID, nil
+			return 0, errMigrationSkipped
 		}
 	}
 
@@ -1336,13 +1338,18 @@ func (sbu SerialBlobUpdater) UpdateBlob(ctx context.Context, db MetaDB, b DBBlob
 		}
 		id, err := sbu.U.UpdateChunk(ctx, db, b, c)
 		if err != nil {
+			if errors.Is(err, errMigrationSkipped) {
+				continue
+			}
 			return err
 		}
 		if cid != id {
 			b.Chunks[i] = id
-			if err := db.AddBlob(b); err != nil {
-				return err
-			}
+		}
+		// Note: need to update the blob info regardless of whether the chunk ID is updated
+		// so that the last modified timestamp is updated.
+		if err := db.AddBlob(b); err != nil {
+			return err
 		}
 	}
 	return nil
