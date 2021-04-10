@@ -21,6 +21,33 @@ import (
 
 var errMigrationSkipped = errors.New("migration is skipped")
 
+func acquireCtx(ctx context.Context, hosts *HostSet, hostKey hostdb.HostPublicKey, block bool) (*proto.Session, error) {
+	if ctx.Err() != nil {
+		return nil, ctx.Err()
+	}
+	var (
+		sess *proto.Session
+		err  error
+	)
+	done := make(chan struct{})
+	go func() {
+		sess, err = hosts.tryAcquire(hostKey)
+		if err == errHostAcquired && block {
+			sess, err = hosts.acquire(hostKey)
+		}
+		if sess != nil && ctx.Err() != nil {
+			hosts.release(hostKey)
+		}
+		close(done)
+	}()
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	case <-done:
+		return sess, err
+	}
+}
+
 func uploadCtx(ctx context.Context, sess *proto.Session, shard *[renterhost.SectorSize]byte) (root crypto.Hash, err error) {
 	if ctx.Err() != nil {
 		return crypto.Hash{}, ctx.Err()
@@ -211,10 +238,7 @@ func (pcu ParallelChunkUploader) UploadChunk(ctx context.Context, db MetaDB, c D
 		go func() {
 			defer wg.Done()
 			for req := range reqChan {
-				sess, err := pcu.Hosts.tryAcquire(req.hostKey)
-				if err == errHostAcquired && req.block {
-					sess, err = pcu.Hosts.acquire(req.hostKey)
-				}
+				sess, err := acquireCtx(ctx, pcu.Hosts, req.hostKey, req.block)
 				if err != nil {
 					respChan <- resp{req, 0, err}
 					continue
@@ -486,10 +510,7 @@ func (ocu OverdriveChunkUploader) UploadChunk(ctx context.Context, db MetaDB, c 
 		go func() {
 			defer wg.Done()
 			for req := range reqChan {
-				sess, err := ocu.Hosts.tryAcquire(req.hostKey)
-				if err == errHostAcquired && req.block {
-					sess, err = ocu.Hosts.acquire(req.hostKey)
-				}
+				sess, err := acquireCtx(req.ctx, ocu.Hosts, req.hostKey, req.block)
 				if err != nil {
 					respChan <- resp{req, crypto.Hash{}, err}
 					continue
@@ -714,10 +735,7 @@ func (pcd ParallelChunkDownloader) DownloadChunk(ctx context.Context, db MetaDB,
 					continue
 				}
 
-				sess, err := pcd.Hosts.tryAcquire(shard.HostKey)
-				if err == errHostAcquired && req.block {
-					sess, err = pcd.Hosts.acquire(shard.HostKey)
-				}
+				sess, err := acquireCtx(ctx, pcd.Hosts, shard.HostKey, req.block)
 				if err != nil {
 					respChan <- resp{req.shardIndex, &HostError{shard.HostKey, err}}
 					continue
@@ -822,10 +840,7 @@ func (ocd OverdriveChunkDownloader) DownloadChunk(ctx context.Context, db MetaDB
 					respChan <- resp{req, nil, &HostError{shard.HostKey, err}}
 					continue
 				}
-				sess, err := ocd.Hosts.tryAcquire(shard.HostKey)
-				if err == errHostAcquired && req.block {
-					sess, err = ocd.Hosts.acquire(shard.HostKey)
-				}
+				sess, err := acquireCtx(ctx, ocd.Hosts, shard.HostKey, req.block)
 				if err != nil {
 					respChan <- resp{req, nil, &HostError{shard.HostKey, err}}
 					continue
