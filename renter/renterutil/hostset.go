@@ -118,6 +118,7 @@ func (set *HostSet) Close() error {
 			lh.s = nil
 		}
 		delete(set.sessions, hostKey)
+		lh.mu.Unlock()
 	}
 	return err
 }
