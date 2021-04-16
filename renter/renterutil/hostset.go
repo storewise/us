@@ -14,8 +14,11 @@ import (
 	"lukechampine.com/us/renter/proto"
 )
 
-var errNoHost = errors.New("no record of that host")
-var errHostAcquired = errors.New("host is currently acquired")
+var (
+	errNoHost        = errors.New("no record of that host")
+	errHostAcquired  = errors.New("host is currently acquired")
+	errHostSetClosed = errors.New("host set closed")
+)
 
 // A HostError associates an error with a given host.
 type HostError struct {
@@ -106,6 +109,8 @@ func (set *HostSet) HasHost(hostKey hostdb.HostPublicKey) bool {
 	return ok
 }
 
+func reconnectAfterClose() error { return errHostSetClosed }
+
 // Close closes all of the sessions in the set.
 func (set *HostSet) Close() error {
 	var err error
@@ -117,6 +122,7 @@ func (set *HostSet) Close() error {
 			}
 			lh.s = nil
 		}
+		lh.reconnect = reconnectAfterClose
 		delete(set.sessions, hostKey)
 		lh.mu.Unlock()
 	}
