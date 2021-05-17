@@ -2,14 +2,16 @@ package renterutil
 
 import (
 	"context"
+	"log"
+	"net"
 	"strings"
 	"time"
 
-	"github.com/hashicorp/go-multierror"
-	"golang.org/x/sync/semaphore"
-
 	"github.com/pkg/errors"
 	"gitlab.com/NebulousLabs/Sia/types"
+	"go.uber.org/multierr"
+	"golang.org/x/sync/semaphore"
+
 	"lukechampine.com/us/hostdb"
 	"lukechampine.com/us/renter"
 	"lukechampine.com/us/renter/proto"
@@ -87,12 +89,12 @@ func reconnectAfterClose() error { return ErrHostSetClosed }
 func (set *HostSet) Close() error {
 	var err error
 	for hostKey, lh := range set.sessions {
-		if e := lh.mu.Acquire(context.Background(), 1); e != nil {
-			err = multierror.Append(err, e)
+		if multierr.AppendInto(&err, lh.mu.Acquire(context.Background(), 1)) {
+			continue
 		}
 		if lh.s != nil {
-			if e := lh.s.Close(); e != nil && !strings.Contains(e.Error(), "use of closed network connection") {
-				err = multierror.Append(err, e)
+			if e := lh.s.Close(); e != nil && !errors.Is(e, net.ErrClosed) {
+				err = multierr.Append(err, e)
 			}
 			lh.s = nil
 		}
@@ -177,7 +179,9 @@ func (set *HostSet) AddHost(c renter.Contract) {
 			}
 			// connection timed out, or some other error occurred; close our
 			// end (just in case) and fallthrough to the reconnection logic
-			lh.s.Close()
+			if err := lh.s.Close(); err != nil {
+				log.Println("failed to close a session:", err)
+			}
 		}
 		hostIP, err := set.hkr.ResolveHostKey(c.HostKey)
 		if err != nil {
@@ -190,10 +194,10 @@ func (set *HostSet) AddHost(c renter.Contract) {
 			return err
 		}
 		if err := lh.s.Lock(c.ID, c.RenterKey, set.lockTimeout); err != nil {
-			lh.s.Close()
+			err = multierr.Append(err, lh.s.Close())
 			return err
 		} else if _, err := lh.s.Settings(); err != nil {
-			lh.s.Close()
+			err = multierr.Append(err, lh.s.Close())
 			return err
 		}
 		set.onConnect(lh.s)
@@ -209,7 +213,9 @@ func (set *HostSet) RemoveHost(host hostdb.HostPublicKey) {
 	if !ok {
 		return
 	}
-	lh.s.Close()
+	if err := lh.s.Close(); err != nil {
+		log.Println("failed to close a session:", err)
+	}
 	delete(set.sessions, host)
 }
 

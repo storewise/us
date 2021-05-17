@@ -12,8 +12,9 @@ require (
 	gitlab.com/NebulousLabs/log v0.0.0-20201012072136-659df99ce4a1
 	gitlab.com/NebulousLabs/siamux v0.0.0-20210108135516-0ae2bb104b77
 	go.etcd.io/bbolt v1.3.5
+	go.uber.org/multierr v1.7.0
 	golang.org/x/crypto v0.0.0-20201221181555-eec23a3978ad
-	golang.org/x/sync v0.0.0-20210220032951-036812b2e83c // indirect
+	golang.org/x/sync v0.0.0-20210220032951-036812b2e83c
 	golang.org/x/sys v0.0.0-20210124154548-22da62e12c0c
 	lukechampine.com/frand v1.3.0
 )
