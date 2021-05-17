@@ -2,6 +2,7 @@ package renterutil
 
 import (
 	"bytes"
+	"context"
 	"encoding/hex"
 	"io/ioutil"
 	"os"
@@ -122,7 +123,7 @@ func TestMigrate(t *testing.T) {
 	// all hosts should have same number of sectors (since we should not have
 	// reuploaded anything to shared hosts)
 	for hostKey := range hs2.sessions {
-		h, err := hs2.acquire(hostKey)
+		h, err := hs2.acquire(context.TODO(), hostKey)
 		if err != nil {
 			t.Fatal(err)
 		}

@@ -1,6 +1,7 @@
 package renterutil
 
 import (
+	"context"
 	"errors"
 	"io"
 	"io/ioutil"
@@ -159,7 +160,7 @@ func (m *Migrator) Flush() error {
 		wg.Add(1)
 		go func(hostKey hostdb.HostPublicKey, s *renter.SectorBuilder) {
 			defer wg.Done()
-			h, err := m.hosts.acquire(hostKey)
+			h, err := m.hosts.acquire(context.TODO(), hostKey)
 			if err != nil {
 				mu.Lock()
 				errs = append(errs, &HostError{hostKey, err})

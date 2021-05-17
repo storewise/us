@@ -105,12 +105,12 @@ func (set *HostSet) Close() error {
 	return err
 }
 
-func (set *HostSet) acquire(host hostdb.HostPublicKey) (*proto.Session, error) {
+func (set *HostSet) acquire(ctx context.Context, host hostdb.HostPublicKey) (*proto.Session, error) {
 	ls, ok := set.sessions[host]
 	if !ok {
 		return nil, ErrNoHost
 	}
-	if err := ls.mu.Acquire(context.Background(), 1); err != nil {
+	if err := ls.mu.Acquire(ctx, 1); err != nil {
 		return nil, err
 	}
 	if err := ls.reconnect(); err != nil {

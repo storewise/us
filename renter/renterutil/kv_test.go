@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"io/ioutil"
+	"net"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -32,7 +33,11 @@ func createTestingKV(tb testing.TB, numHosts, m, n int) PseudoKV {
 		hosts[i] = h
 		hkr[h.PublicKey] = h.Settings.NetAddress
 		hs.AddHost(c)
-		cleanups = append(cleanups, func() { h.Close() })
+		cleanups = append(cleanups, func() {
+			if err := h.Close(); err != nil && !errors.Is(err, net.ErrClosed) {
+				tb.Error(err)
+			}
+		})
 	}
 
 	// use ephemeral DB during short tests
@@ -44,8 +49,14 @@ func createTestingKV(tb testing.TB, numHosts, m, n int) PseudoKV {
 		if err != nil {
 			tb.Fatal(err)
 		}
-		os.MkdirAll(dir, 0700)
-		tb.Cleanup(func() { os.RemoveAll(dir) })
+		if err := os.MkdirAll(dir, 0700); err != nil {
+			tb.Fatal(err)
+		}
+		tb.Cleanup(func() {
+			if err := os.RemoveAll(dir); err != nil {
+				tb.Error(err)
+			}
+		})
 		dbName := filepath.Join(dir, "kv.db")
 		db, err = NewBoltMetaDB(dbName)
 		if err != nil {
@@ -62,7 +73,11 @@ func createTestingKV(tb testing.TB, numHosts, m, n int) PseudoKV {
 		Downloader: ParallelChunkDownloader{Hosts: hs},
 		Deleter:    ParallelSectorDeleter{Hosts: hs},
 	}
-	tb.Cleanup(func() { kv.Close() })
+	tb.Cleanup(func() {
+		if err := kv.Close(); err != nil {
+			tb.Error(err)
+		}
+	})
 
 	return kv
 }
@@ -150,6 +165,9 @@ func TestKVBufferHosts(t *testing.T) {
 		chunkHosts = append(chunkHosts, hosts)
 	}
 	allEqual := true
+	if len(chunkHosts) == 0 {
+		t.Fatal("chunkHosts are empty")
+	}
 	for i := range chunkHosts[1:] {
 		allEqual = allEqual && chunkHosts[i] == chunkHosts[i+1]
 	}
@@ -202,7 +220,14 @@ func TestKVResumeHost(t *testing.T) {
 	hs := NewHostSet(hkr, 0)
 	for i := range hosts {
 		h, c := createHostWithContract(t)
-		defer h.Close()
+		func(h *ghost.Host) {
+			t.Cleanup(func() {
+				err := h.Close()
+				if err != nil {
+					t.Error(err)
+				}
+			})
+		}(h)
 		hosts[i] = h
 		hkr[h.PublicKey] = h.Settings.NetAddress
 		hs.AddHost(c)
@@ -224,12 +249,16 @@ func TestKVResumeHost(t *testing.T) {
 		R: r,
 		N: renterhost.SectorSize * 2,
 		Fn: func() {
-			hosts[1].Close()
-			s, err := hs.acquire(hosts[1].PublicKey)
+			if err := hosts[1].Close(); err != nil {
+				t.Error(err)
+			}
+			s, err := hs.acquire(ctx, hosts[1].PublicKey)
 			if err != nil {
 				return
 			}
-			s.Close()
+			if err := s.Close(); err != nil && !errors.Is(err, net.ErrClosed) {
+				t.Error(err)
+			}
 			hs.release(hosts[1].PublicKey)
 		},
 	})
@@ -239,7 +268,12 @@ func TestKVResumeHost(t *testing.T) {
 
 	// replace host 0 with a new host
 	h, c := createHostWithContract(t)
-	defer h.Close()
+	defer func(h *ghost.Host) {
+		err := h.Close()
+		if err != nil {
+			t.Error(err)
+		}
+	}(h)
 	hkr[h.PublicKey] = h.Settings.NetAddress
 	delete(hs.sessions, hosts[1].PublicKey)
 	hs.AddHost(c)
@@ -312,14 +346,21 @@ func TestKVMigrate(t *testing.T) {
 	// replace a host in the set
 	hs := kv.Uploader.(ParallelChunkUploader).Hosts
 	for hostKey := range hs.sessions {
-		s, _ := hs.acquire(hostKey)
-		s.Close()
+		s, _ := hs.acquire(ctx, hostKey)
+		if err := s.Close(); err != nil {
+			t.Error(err)
+		}
 		hs.release(hostKey)
 		delete(hs.sessions, hostKey)
 		break
 	}
 	h, c := createHostWithContract(t)
-	defer h.Close()
+	defer func(h *ghost.Host) {
+		err := h.Close()
+		if err != nil {
+			t.Error(err)
+		}
+	}(h)
 	hs.hkr.(testHKR)[h.PublicKey] = h.Settings.NetAddress
 	hs.AddHost(c)
 
