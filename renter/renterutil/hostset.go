@@ -1,11 +1,12 @@
 package renterutil
 
 import (
+	"context"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/hashicorp/go-multierror"
+	"golang.org/x/sync/semaphore"
 
 	"github.com/pkg/errors"
 	"gitlab.com/NebulousLabs/Sia/types"
@@ -59,39 +60,10 @@ func (hse HostErrorSet) Is(target error) bool {
 	return false
 }
 
-type tryLock struct {
-	c    chan struct{}
-	once sync.Once
-}
-
-func (mu *tryLock) init() {
-	mu.c = make(chan struct{}, 1)
-	mu.c <- struct{}{}
-}
-
-func (mu *tryLock) Lock() {
-	mu.once.Do(mu.init)
-	<-mu.c
-}
-
-func (mu *tryLock) TryLock() bool {
-	mu.once.Do(mu.init)
-	select {
-	case <-mu.c:
-		return true
-	default:
-		return false
-	}
-}
-
-func (mu *tryLock) Unlock() {
-	mu.c <- struct{}{}
-}
-
 type lockedHost struct {
 	reconnect func() error
 	s         *proto.Session
-	mu        tryLock
+	mu        *semaphore.Weighted
 }
 
 // A HostSet is a collection of renter-host protocol sessions.
@@ -115,7 +87,9 @@ func reconnectAfterClose() error { return ErrHostSetClosed }
 func (set *HostSet) Close() error {
 	var err error
 	for hostKey, lh := range set.sessions {
-		lh.mu.Lock()
+		if e := lh.mu.Acquire(context.Background(), 1); e != nil {
+			err = multierror.Append(err, e)
+		}
 		if lh.s != nil {
 			if e := lh.s.Close(); e != nil && !strings.Contains(e.Error(), "use of closed network connection") {
 				err = multierror.Append(err, e)
@@ -124,7 +98,7 @@ func (set *HostSet) Close() error {
 		}
 		lh.reconnect = reconnectAfterClose
 		delete(set.sessions, hostKey)
-		lh.mu.Unlock()
+		lh.mu.Release(1)
 	}
 	return err
 }
@@ -134,9 +108,11 @@ func (set *HostSet) acquire(host hostdb.HostPublicKey) (*proto.Session, error) {
 	if !ok {
 		return nil, ErrNoHost
 	}
-	ls.mu.Lock()
+	if err := ls.mu.Acquire(context.Background(), 1); err != nil {
+		return nil, err
+	}
 	if err := ls.reconnect(); err != nil {
-		ls.mu.Unlock()
+		ls.mu.Release(1)
 		return nil, err
 	}
 	return ls.s, nil
@@ -147,11 +123,11 @@ func (set *HostSet) tryAcquire(host hostdb.HostPublicKey) (*proto.Session, error
 	if !ok {
 		return nil, ErrNoHost
 	}
-	if !ls.mu.TryLock() {
+	if !ls.mu.TryAcquire(1) {
 		return nil, ErrHostAcquired
 	}
 	if err := ls.reconnect(); err != nil {
-		ls.mu.Unlock()
+		ls.mu.Release(1)
 		return nil, err
 	}
 	return ls.s, nil
@@ -162,7 +138,7 @@ func (set *HostSet) release(host hostdb.HostPublicKey) {
 	if lh.s.IsClosed() {
 		lh.s = nil // force a reconnect
 	}
-	lh.mu.Unlock()
+	lh.mu.Release(1)
 }
 
 // SetLockTimeout sets the timeout used for all Lock RPCs in Sessions initiated
@@ -174,7 +150,9 @@ func (set *HostSet) SetOnConnect(fn func(*proto.Session)) { set.onConnect = fn }
 
 // AddHost adds a host to the set for later use.
 func (set *HostSet) AddHost(c renter.Contract) {
-	lh := new(lockedHost)
+	lh := &lockedHost{
+		mu: semaphore.NewWeighted(1),
+	}
 	// lazy connection function
 	var lastSeen time.Time
 	lh.reconnect = func() error {
