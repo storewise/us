@@ -30,12 +30,12 @@ type HostError struct {
 }
 
 // Error implements error.
-func (he HostError) Error() string {
+func (he *HostError) Error() string {
 	return he.HostKey.ShortKey() + ": " + he.Err.Error()
 }
 
 // Unwrap returns the underlying error.
-func (he HostError) Unwrap() error {
+func (he *HostError) Unwrap() error {
 	return he.Err
 }
 
@@ -60,6 +60,14 @@ func (hse HostErrorSet) Is(target error) bool {
 		}
 	}
 	return false
+}
+
+func (hse HostErrorSet) Errors() []error {
+	errs := make([]error, len(hse))
+	for i, e := range hse {
+		errs[i] = e
+	}
+	return errs
 }
 
 type lockedHost struct {
