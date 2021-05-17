@@ -6,15 +6,16 @@ import (
 	"bytes"
 	"context"
 	"io"
+	"log"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
 	"time"
 
-	"github.com/hashicorp/go-multierror"
 	"github.com/pkg/errors"
 	"gitlab.com/NebulousLabs/Sia/crypto"
+	"go.uber.org/multierr"
 
 	"lukechampine.com/us/hostdb"
 	"lukechampine.com/us/renter"
@@ -463,17 +464,12 @@ func (fs *PseudoFS) Close() error {
 		}
 		delete(fs.files, fd)
 	}
-	var err *multierror.Error
+	var err error
 	for fd, d := range fs.dirs {
-		if e := d.Close(); e != nil {
-			err = multierror.Append(err, e)
-		}
+		err = multierr.Append(err, d.Close())
 		delete(fs.dirs, fd)
 	}
-	if e := fs.hosts.Close(); e != nil {
-		err = multierror.Append(err, e)
-	}
-	return err.ErrorOrNil()
+	return multierr.Append(err, fs.hosts.Close())
 }
 
 // NewFileSystem returns a new pseudo-filesystem rooted at root, which must be a
@@ -550,6 +546,10 @@ func (pf PseudoFile) Close() error {
 	}
 	// f is only truly deleted if it has no pending writes; otherwise, it sticks
 	// around until the next flush
+	if f == nil {
+		log.Println("f is nil")
+		return nil
+	}
 	if len(f.pendingWrites) == 0 {
 		delete(pf.fs.files, pf.fd)
 	}
@@ -625,6 +625,10 @@ func (pf PseudoFile) ReadAtP(p []byte, off int64) (int, error) {
 	} else if d != nil {
 		return 0, ErrDirectory
 	}
+	if f == nil {
+		log.Println("f is nil")
+		return 0, nil
+	}
 
 	splitSize := len(p) / (len(f.m.Hosts) / f.m.MinShards)
 	if splitSize == 0 {
@@ -671,6 +675,11 @@ func (pf PseudoFile) WriteAt(p []byte, off int64) (int, error) {
 	} else if d != nil {
 		return 0, ErrDirectory
 	}
+	if f == nil {
+		log.Println("f is nil")
+		return 0, nil
+	}
+
 	if pf.appendOnly() && off != f.filesize() {
 		return 0, ErrAppendOnly
 	}

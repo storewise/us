@@ -15,11 +15,11 @@ import (
 	"unsafe"
 
 	"github.com/aead/chacha20/chacha"
-	"github.com/hashicorp/go-multierror"
 	"github.com/pkg/errors"
 	"gitlab.com/NebulousLabs/Sia/crypto"
-	"lukechampine.com/frand"
+	"go.uber.org/multierr"
 
+	"lukechampine.com/frand"
 	"lukechampine.com/us/hostdb"
 	"lukechampine.com/us/merkle"
 	"lukechampine.com/us/renterhost"
@@ -208,7 +208,7 @@ func WriteMetaFile(filename string, m *MetaFile) (err error) {
 	}
 	defer func() {
 		if e := f.Close(); e != nil && !errors.Is(e, os.ErrClosed) {
-			err = multierror.Append(err, e)
+			err = multierr.Append(err, e)
 		}
 	}()
 	zip := gzip.NewWriter(f)
@@ -271,11 +271,8 @@ func ReadMetaFile(filename string) (_ *MetaFile, err error) {
 	if err != nil {
 		return nil, errors.Wrap(err, "could not open archive")
 	}
-	defer func() {
-		if e := f.Close(); e != nil {
-			err = multierror.Append(err, e)
-		}
-	}()
+	defer multierr.AppendInvoke(&err, multierr.Close(f))
+
 	zip, err := gzip.NewReader(f)
 	if err != nil {
 		return nil, errors.Wrap(err, "could not read gzip header")
@@ -350,21 +347,13 @@ func ReadMetaIndex(filename string) (_ MetaIndex, err error) {
 	if err != nil {
 		return MetaIndex{}, errors.Wrap(err, "could not open archive")
 	}
-	defer func() {
-		if e := f.Close(); e != nil {
-			err = multierror.Append(err, e)
-		}
-	}()
+	defer multierr.AppendInvoke(&err, multierr.Close(f))
 
 	zip, err := gzip.NewReader(f)
 	if err != nil {
 		return MetaIndex{}, errors.Wrap(err, "could not read gzip header")
 	}
-	defer func() {
-		if e := zip.Close(); e != nil {
-			err = multierror.Append(err, e)
-		}
-	}()
+	defer multierr.AppendInvoke(&err, multierr.Close(zip))
 
 	var index MetaIndex
 	tr := tar.NewReader(zip)
@@ -414,21 +403,13 @@ func readMetaFileShards(filename string) (_ MetaIndex, _ int, err error) {
 	if err != nil {
 		return MetaIndex{}, 0, errors.Wrap(err, "could not open archive")
 	}
-	defer func() {
-		if e := f.Close(); e != nil {
-			err = multierror.Append(err, e)
-		}
-	}()
+	defer multierr.AppendInvoke(&err, multierr.Close(f))
 
 	zip, err := gzip.NewReader(f)
 	if err != nil {
 		return MetaIndex{}, 0, errors.Wrap(err, "could not read gzip header")
 	}
-	defer func() {
-		if e := zip.Close(); e != nil {
-			err = multierror.Append(err, e)
-		}
-	}()
+	defer multierr.AppendInvoke(&err, multierr.Close(zip))
 
 	var haveIndex bool
 	var index MetaIndex

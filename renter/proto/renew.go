@@ -3,12 +3,13 @@ package proto
 import (
 	"crypto/ed25519"
 	"math"
+	"net"
 	"time"
 
-	"github.com/hashicorp/go-multierror"
 	"github.com/pkg/errors"
 	"gitlab.com/NebulousLabs/Sia/crypto"
 	"gitlab.com/NebulousLabs/Sia/types"
+	"go.uber.org/multierr"
 
 	"lukechampine.com/us/ed25519hash"
 	"lukechampine.com/us/hostdb"
@@ -24,8 +25,8 @@ func RenewContract(w Wallet, tpool TransactionPool, id types.FileContractID, key
 	}
 	s.host = host
 	defer func() {
-		if e := s.Close(); e != nil {
-			err = multierror.Append(err, e)
+		if e := s.Close(); e != nil && !errors.Is(e, net.ErrClosed) {
+			err = multierr.Append(err, e)
 		}
 	}()
 
@@ -185,7 +186,7 @@ func (s *Session) RenewContract(w Wallet, tpool TransactionPool, renterPayout ty
 	if err != nil {
 		err = errors.Wrap(err, "failed to sign transaction")
 		if e := s.sess.WriteResponse(nil, err); e != nil {
-			err = multierror.Append(err, e)
+			err = multierr.Append(err, e)
 		}
 		return ContractRevision{}, nil, err
 	}

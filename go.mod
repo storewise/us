@@ -5,7 +5,6 @@ go 1.16
 require (
 	filippo.io/edwards25519 v1.0.0-beta.2
 	github.com/aead/chacha20 v0.0.0-20180709150244-8b13a72661da
-	github.com/hashicorp/go-multierror v1.1.0
 	github.com/pkg/errors v0.9.1
 	gitlab.com/NebulousLabs/Sia v1.5.4
 	gitlab.com/NebulousLabs/encoding v0.0.0-20200604091946-456c3dc907fe

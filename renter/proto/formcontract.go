@@ -3,12 +3,14 @@ package proto
 import (
 	"crypto/ed25519"
 	"math/big"
+	"net"
 	"time"
 
-	"github.com/hashicorp/go-multierror"
 	"github.com/pkg/errors"
 	"gitlab.com/NebulousLabs/Sia/crypto"
 	"gitlab.com/NebulousLabs/Sia/types"
+	"go.uber.org/multierr"
+
 	"lukechampine.com/us/ed25519hash"
 	"lukechampine.com/us/hostdb"
 	"lukechampine.com/us/renterhost"
@@ -29,8 +31,8 @@ func FormContract(w Wallet, tpool TransactionPool, key ed25519.PrivateKey, host 
 	}
 	s.host = host
 	defer func() {
-		if e := s.Close(); e != nil {
-			err = multierror.Append(err, e)
+		if e := s.Close(); e != nil && !errors.Is(e, net.ErrClosed) {
+			err = multierr.Append(err, e)
 		}
 	}()
 	return s.FormContract(w, tpool, key, renterPayout, startHeight, endHeight)
@@ -162,7 +164,7 @@ func (s *Session) FormContract(w Wallet, tpool TransactionPool, key ed25519.Priv
 		err = errors.Wrap(err, "failed to sign transaction")
 		// don't want to reveal too much
 		if e := s.sess.WriteResponse(nil, errors.New("internal error")); e != nil {
-			err = multierror.Append(err, e)
+			err = multierr.Append(err, e)
 		}
 		return ContractRevision{}, nil, err
 	}

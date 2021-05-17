@@ -7,10 +7,10 @@ import (
 	"sync"
 	"time"
 
-	"github.com/hashicorp/go-multierror"
 	"gitlab.com/NebulousLabs/Sia/crypto"
 	"gitlab.com/NebulousLabs/encoding"
 	bolt "go.etcd.io/bbolt"
+	"go.uber.org/multierr"
 
 	"lukechampine.com/us/hostdb"
 	"lukechampine.com/us/renter"
@@ -477,26 +477,26 @@ func (db *BoltMetaDB) DeleteBlob(key []byte) (map[hostdb.HostPublicKey][]crypto.
 		for _, cid := range blob.Chunks {
 			chunk, e := db.chunk(tx, cid)
 			if e != nil {
-				err = multierror.Append(err, e)
+				err = multierr.Append(err, e)
 				continue
 			}
 			for _, sid := range chunk.Shards {
 				shard, e := db.shard(tx, sid)
 				if e != nil {
-					err = multierror.Append(err, e)
+					err = multierr.Append(err, e)
 					continue
 				}
 				sectors[shard.HostKey] = append(sectors[shard.HostKey], shard.SectorRoot)
 				if e = db.deleteShard(tx, sid); e != nil {
-					err = multierror.Append(err, e)
+					err = multierr.Append(err, e)
 				}
 			}
 			if e = db.deleteChunk(tx, cid); e != nil {
-				err = multierror.Append(err, e)
+				err = multierr.Append(err, e)
 			}
 		}
 		if e := tx.Bucket(bucketBlobs).Delete(key); e != nil {
-			err = multierror.Append(err, e)
+			err = multierr.Append(err, e)
 		}
 		return err
 	}); err != nil {

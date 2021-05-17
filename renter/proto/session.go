@@ -15,11 +15,11 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/hashicorp/go-multierror"
 	"github.com/pkg/errors"
 	"gitlab.com/NebulousLabs/Sia/crypto"
 	"gitlab.com/NebulousLabs/Sia/modules"
 	"gitlab.com/NebulousLabs/Sia/types"
+	"go.uber.org/multierr"
 
 	"lukechampine.com/us/ed25519hash"
 	"lukechampine.com/us/hostdb"
@@ -466,7 +466,7 @@ func (s *Session) Read(w io.Writer, sections []renterhost.RPCReadRequestSection)
 	// before returning
 	defer func() {
 		if e := s.sess.WriteResponse(&renterhost.RPCReadStop, nil); e != nil {
-			err = multierror.Append(err, e)
+			err = multierr.Append(err, e)
 		}
 	}()
 	var hostSig []byte
@@ -673,7 +673,7 @@ func (s *Session) Write(actions []renterhost.RPCWriteAction) (err error) {
 	if newFileSize > 0 && !merkle.VerifyDiffProof(actions, s.rev.NumSectors(), proofHashes, leafHashes, oldRoot, newRoot, s.appendRoots) {
 		err := ErrInvalidMerkleProof
 		if e := s.sess.WriteResponse(nil, err); e != nil {
-			err = multierror.Append(err, e)
+			err = multierr.Append(err, e)
 		}
 		return err
 	}
@@ -806,14 +806,14 @@ func NewSession(hostIP modules.NetAddress, hostKey hostdb.HostPublicKey, id type
 		return nil, err
 	}
 	if err := s.Lock(id, key, time.Duration(lockTimeout)*time.Millisecond); err != nil {
-		if e := s.Close(); e != nil {
-			err = multierror.Append(err, e)
+		if e := s.Close(); e != nil && !errors.Is(e, net.ErrClosed) {
+			err = multierr.Append(err, e)
 		}
 		return nil, err
 	}
 	if _, err := s.Settings(); err != nil {
-		if e := s.Close(); e != nil {
-			err = multierror.Append(err, e)
+		if e := s.Close(); e != nil && !errors.Is(e, net.ErrClosed) {
+			err = multierr.Append(err, e)
 		}
 		return nil, err
 	}
@@ -845,8 +845,8 @@ func NewUnlockedSessionFromConn(conn net.Conn, hostKey hostdb.HostPublicKey, cur
 	start := time.Now()
 	s, err := renterhost.NewRenterSession(sc, hostKey.Ed25519())
 	if err != nil {
-		if e := sc.Close(); e != nil {
-			err = multierror.Append(err, e)
+		if e := sc.Close(); e != nil && !errors.Is(e, net.ErrClosed) {
+			err = multierr.Append(err, e)
 		}
 		return nil, err
 	}
