@@ -5,6 +5,7 @@ import (
 	"crypto/ed25519"
 	"encoding/binary"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -15,11 +16,10 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/hashicorp/go-multierror"
-	"github.com/pkg/errors"
 	"gitlab.com/NebulousLabs/Sia/crypto"
 	"gitlab.com/NebulousLabs/Sia/modules"
 	"gitlab.com/NebulousLabs/Sia/types"
+	"go.uber.org/multierr"
 
 	"lukechampine.com/us/ed25519hash"
 	"lukechampine.com/us/hostdb"
@@ -73,11 +73,14 @@ func SetDialTimeout(timeout uint64) {
 // readCtx or rejectCtx depending on whether we encountered an I/O error or the
 // host sent an explicit error message.
 func wrapResponseErr(err error, readCtx, rejectCtx string) error {
-	err = errors.Cause(err)
-	if _, ok := err.(*renterhost.RPCError); ok {
-		return errors.Wrap(err, rejectCtx)
+	if err == nil {
+		return nil
 	}
-	return errors.Wrap(err, readCtx)
+	var e *renterhost.RPCError
+	if errors.As(err, &e) {
+		return fmt.Errorf("%v: %w", rejectCtx, e)
+	}
+	return fmt.Errorf("%v: %w", readCtx, err)
 }
 
 type statsConn struct {
@@ -250,7 +253,7 @@ func (s *Session) Lock(id types.FileContractID, key ed25519.PrivateKey, timeout 
 	s.sess.SetChallenge(resp.NewChallenge)
 	// verify claimed revision
 	if len(resp.Signatures) != 2 {
-		return errors.Errorf("host returned wrong number of signatures (expected 2, got %v)", len(resp.Signatures))
+		return fmt.Errorf("host returned wrong number of signatures (expected 2, got %v)", len(resp.Signatures))
 	}
 	revHash := renterhost.HashRevision(resp.Revision)
 	if !ed25519hash.Verify(ed25519hash.ExtractPublicKey(key), revHash, resp.Signatures[0].Signature) {
@@ -301,7 +304,7 @@ func (s *Session) Settings() (_ hostdb.HostSettings, err error) {
 	if err := s.call(renterhost.RPCSettingsID, nil, &resp); err != nil {
 		return hostdb.HostSettings{}, err
 	} else if err := json.Unmarshal(resp.Settings, &s.host.HostSettings); err != nil {
-		return hostdb.HostSettings{}, errors.Wrap(err, "couldn't unmarshal json")
+		return hostdb.HostSettings{}, fmt.Errorf("couldn't unmarshal json: %w", err)
 	}
 	return s.host.HostSettings, nil
 }
@@ -466,7 +469,7 @@ func (s *Session) Read(w io.Writer, sections []renterhost.RPCReadRequestSection)
 	// before returning
 	defer func() {
 		if e := s.sess.WriteResponse(&renterhost.RPCReadStop, nil); e != nil {
-			err = multierror.Append(err, e)
+			err = multierr.Append(err, e)
 		}
 	}()
 	var hostSig []byte
@@ -484,17 +487,17 @@ func (s *Session) Read(w io.Writer, sections []renterhost.RPCReadRequestSection)
 		// Read the signature, which may or may not be present.
 		lenbuf := make([]byte, 8)
 		if _, err := io.ReadFull(msgReader, lenbuf); err != nil {
-			return errors.Wrap(err, "couldn't read signature len")
+			return fmt.Errorf("couldn't read signature len: %w", err)
 		}
 		if n := binary.LittleEndian.Uint64(lenbuf); n > 0 {
 			hostSig = make([]byte, n)
 			if _, err := io.ReadFull(msgReader, hostSig); err != nil {
-				return errors.Wrap(err, "couldn't read signature")
+				return fmt.Errorf("couldn't read signature: %w", err)
 			}
 		}
 		// stream the sector data into w and the proof verifier
 		if _, err := io.ReadFull(msgReader, lenbuf); err != nil {
-			return errors.Wrap(err, "couldn't read data len")
+			return fmt.Errorf("couldn't read data len: %w", err)
 		} else if binary.LittleEndian.Uint64(lenbuf) != uint64(sec.Length) {
 			return errors.New("host sent wrong amount of sector data")
 		}
@@ -505,11 +508,11 @@ func (s *Session) Read(w io.Writer, sections []renterhost.RPCReadRequestSection)
 		// the proof verifier Reads one segment at a time, so bufio is crucial
 		// for performance here
 		if _, err := rpv.ReadFrom(bufio.NewReaderSize(tee, 1<<16)); err != nil {
-			return errors.Wrap(err, "couldn't stream sector data")
+			return fmt.Errorf("couldn't stream sector data: %w", err)
 		}
 		// read the Merkle proof
 		if _, err := io.ReadFull(msgReader, lenbuf); err != nil {
-			return errors.Wrap(err, "couldn't read proof len")
+			return fmt.Errorf("couldn't read proof len: %w", err)
 		}
 		if binary.LittleEndian.Uint64(lenbuf) != uint64(merkle.ProofSize(merkle.SegmentsPerSector, proofStart, proofEnd)) {
 			return errors.New("invalid proof size")
@@ -517,7 +520,7 @@ func (s *Session) Read(w io.Writer, sections []renterhost.RPCReadRequestSection)
 		proof := make([]crypto.Hash, binary.LittleEndian.Uint64(lenbuf))
 		for i := range proof {
 			if _, err := io.ReadFull(msgReader, proof[i][:]); err != nil {
-				return errors.Wrap(err, "couldn't read Merkle proof")
+				return fmt.Errorf("couldn't read Merkle proof: %w", err)
 			}
 		}
 		// verify the message tag and the Merkle proof
@@ -673,7 +676,7 @@ func (s *Session) Write(actions []renterhost.RPCWriteAction) (err error) {
 	if newFileSize > 0 && !merkle.VerifyDiffProof(actions, s.rev.NumSectors(), proofHashes, leafHashes, oldRoot, newRoot, s.appendRoots) {
 		err := ErrInvalidMerkleProof
 		if e := s.sess.WriteResponse(nil, err); e != nil {
-			err = multierror.Append(err, e)
+			err = multierr.Append(err, e)
 		}
 		return err
 	}
@@ -687,7 +690,7 @@ func (s *Session) Write(actions []renterhost.RPCWriteAction) (err error) {
 		Signature: ed25519hash.Sign(s.key, revisionHash),
 	}
 	if err := s.sess.WriteResponse(renterSig, nil); err != nil {
-		return errors.Wrap(err, "couldn't write signature response")
+		return fmt.Errorf("couldn't write signature response: %w", err)
 	}
 	var hostSig renterhost.RPCWriteResponse
 	if err := s.sess.ReadResponse(&hostSig, 4096); err != nil {
@@ -800,20 +803,20 @@ func (s *Session) Close() (err error) {
 // host. The supplied contract will be locked and synchronized with the host.
 // The host's settings will also be requested.
 func NewSession(hostIP modules.NetAddress, hostKey hostdb.HostPublicKey, id types.FileContractID, key ed25519.PrivateKey, currentHeight types.BlockHeight) (_ *Session, err error) {
-	defer wrapErrWithReplace(&err, "NewSession")
+	defer wrapErr(&err, "NewSession")
 	s, err := NewUnlockedSession(hostIP, hostKey, currentHeight)
 	if err != nil {
 		return nil, err
 	}
 	if err := s.Lock(id, key, time.Duration(lockTimeout)*time.Millisecond); err != nil {
-		if e := s.Close(); e != nil {
-			err = multierror.Append(err, e)
+		if e := s.Close(); e != nil && !errors.Is(e, net.ErrClosed) {
+			err = multierr.Append(err, e)
 		}
 		return nil, err
 	}
 	if _, err := s.Settings(); err != nil {
-		if e := s.Close(); e != nil {
-			err = multierror.Append(err, e)
+		if e := s.Close(); e != nil && !errors.Is(e, net.ErrClosed) {
+			err = multierr.Append(err, e)
 		}
 		return nil, err
 	}
@@ -823,7 +826,7 @@ func NewSession(hostIP modules.NetAddress, hostKey hostdb.HostPublicKey, id type
 // NewUnlockedSession initiates a new renter-host protocol session with the specified
 // host, without locking an associated contract or requesting the host's settings.
 func NewUnlockedSession(hostIP modules.NetAddress, hostKey hostdb.HostPublicKey, currentHeight types.BlockHeight) (_ *Session, err error) {
-	defer wrapErrWithReplace(&err, "NewUnlockedSession")
+	defer wrapErr(&err, "NewUnlockedSession")
 	conn, err := net.DialTimeout("tcp", string(hostIP), time.Duration(dialTimeout)*time.Millisecond)
 	if err != nil {
 		return nil, err
@@ -845,8 +848,8 @@ func NewUnlockedSessionFromConn(conn net.Conn, hostKey hostdb.HostPublicKey, cur
 	start := time.Now()
 	s, err := renterhost.NewRenterSession(sc, hostKey.Ed25519())
 	if err != nil {
-		if e := sc.Close(); e != nil {
-			err = multierror.Append(err, e)
+		if e := sc.Close(); e != nil && !errors.Is(e, net.ErrClosed) {
+			err = multierr.Append(err, e)
 		}
 		return nil, err
 	}

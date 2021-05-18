@@ -3,14 +3,14 @@ package renterutil
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"sync"
 
-	"github.com/hashicorp/go-multierror"
-	"github.com/pkg/errors"
 	"gitlab.com/NebulousLabs/Sia/crypto"
 	"gitlab.com/NebulousLabs/Sia/modules/host/contractmanager"
+	"go.uber.org/multierr"
 	"lukechampine.com/frand"
 
 	"lukechampine.com/us/hostdb"
@@ -650,7 +650,7 @@ func (ocu OverdriveChunkUploader) UploadChunk(ctx context.Context, db MetaDB, c 
 		}
 	}
 	if rem > 0 {
-		return errors.Wrap(errs, "could not upload to enough hosts")
+		return fmt.Errorf("could not upload to enough hosts: %w", errs)
 	}
 	return nil
 }
@@ -1076,7 +1076,7 @@ func (sbu SerialBlobUploader) UploadBlob(ctx context.Context, db MetaDB, b DBBlo
 			return err
 		}
 		if err := sbu.U.UploadChunk(ctx, db, c, b.Seed, shards); err != nil {
-			return errors.Wrap(err, "failed to upload a chunk")
+			return fmt.Errorf("failed to upload a chunk: %w", err)
 		}
 	}
 	return nil
@@ -1132,7 +1132,7 @@ func (pbu ParallelBlobUploader) UploadBlob(ctx context.Context, db MetaDB, b DBB
 	defer func() {
 		for inflight > 0 {
 			if e := consumeResp(); e != nil {
-				err = multierror.Append(err, e)
+				err = multierr.Append(err, e)
 			}
 		}
 		close(reqChan)

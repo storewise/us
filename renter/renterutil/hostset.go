@@ -2,12 +2,13 @@ package renterutil
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"log"
 	"net"
 	"strings"
 	"time"
 
-	"github.com/pkg/errors"
 	"gitlab.com/NebulousLabs/Sia/types"
 	"go.uber.org/multierr"
 	"golang.org/x/sync/semaphore"
@@ -30,12 +31,12 @@ type HostError struct {
 }
 
 // Error implements error.
-func (he HostError) Error() string {
+func (he *HostError) Error() string {
 	return he.HostKey.ShortKey() + ": " + he.Err.Error()
 }
 
 // Unwrap returns the underlying error.
-func (he HostError) Unwrap() error {
+func (he *HostError) Unwrap() error {
 	return he.Err
 }
 
@@ -60,6 +61,14 @@ func (hse HostErrorSet) Is(target error) bool {
 		}
 	}
 	return false
+}
+
+func (hse HostErrorSet) Errors() []error {
+	errs := make([]error, len(hse))
+	for i, e := range hse {
+		errs[i] = e
+	}
+	return errs
 }
 
 type lockedHost struct {
@@ -185,7 +194,7 @@ func (set *HostSet) AddHost(c renter.Contract) {
 		}
 		hostIP, err := set.hkr.ResolveHostKey(c.HostKey)
 		if err != nil {
-			return errors.Wrap(err, "could not resolve host key")
+			return fmt.Errorf("could not resolve host key: %w", err)
 		}
 		// create and lock the session manually so that we can use our custom
 		// lock timeout

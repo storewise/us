@@ -5,16 +5,18 @@ package renterutil // import "lukechampine.com/us/renter/renterutil"
 import (
 	"bytes"
 	"context"
+	"errors"
+	"fmt"
 	"io"
+	"log"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
 	"time"
 
-	"github.com/hashicorp/go-multierror"
-	"github.com/pkg/errors"
 	"gitlab.com/NebulousLabs/Sia/crypto"
+	"go.uber.org/multierr"
 
 	"lukechampine.com/us/hostdb"
 	"lukechampine.com/us/renter"
@@ -86,12 +88,12 @@ func (fs *PseudoFS) Chmod(name string, mode os.FileMode) error {
 
 	m, err := renter.ReadMetaFile(path)
 	if err != nil {
-		return errors.Wrapf(err, "chmod %v", path)
+		return fmt.Errorf("chmod %v: %w", path, err)
 	}
 	m.Mode = mode
 	m.ModTime = time.Now()
 	if err := renter.WriteMetaFile(path, m); err != nil {
-		return errors.Wrapf(err, "chmod %v", path)
+		return fmt.Errorf("chmod %v: %w", path, err)
 	}
 	return nil
 }
@@ -157,8 +159,10 @@ func (fs *PseudoFS) OpenFile(name string, flag int, perm os.FileMode, minShards 
 					}
 				}
 				if len(missing) > 0 {
-					return nil, errors.Errorf("insufficient contracts: need a contract from each of these hosts: %v",
-						strings.Join(missing, " "))
+					return nil, fmt.Errorf(
+						"insufficient contracts: need a contract from each of these hosts: %v",
+						strings.Join(missing, " "),
+					)
 				}
 			}
 			of.closed = false
@@ -199,7 +203,7 @@ func (fs *PseudoFS) OpenFile(name string, flag int, perm os.FileMode, minShards 
 		var err error
 		m, err = renter.ReadMetaFile(path)
 		if err != nil {
-			return nil, errors.Wrapf(err, "open %v", name)
+			return nil, fmt.Errorf("open %v: %w", name, err)
 		}
 		// check whether we have a session for each of the file's hosts
 		var missing []string
@@ -211,14 +215,19 @@ func (fs *PseudoFS) OpenFile(name string, flag int, perm os.FileMode, minShards 
 		if flag&rwmask == os.O_RDONLY {
 			// only need m.MinShards hosts in order to read
 			if have := len(m.Hosts) - len(missing); have < m.MinShards {
-				return nil, errors.Errorf("insufficient contracts: need a contract from at least %v of these hosts: %v",
-					m.MinShards-have, strings.Join(missing, " "))
+				return nil, fmt.Errorf(
+					"insufficient contracts: need a contract from at least %v of these hosts: %v",
+					m.MinShards-have,
+					strings.Join(missing, " "),
+				)
 			}
 		} else {
 			// need all hosts in order to write
 			if len(missing) > 0 {
-				return nil, errors.Errorf("insufficient contracts: need a contract from each of these hosts: %v",
-					strings.Join(missing, " "))
+				return nil, fmt.Errorf(
+					"insufficient contracts: need a contract from each of these hosts: %v",
+					strings.Join(missing, " "),
+				)
 			}
 		}
 	}
@@ -444,7 +453,7 @@ func (fs *PseudoFS) Stat(name string) (os.FileInfo, error) {
 	path += metafileExt
 	index, err := renter.ReadMetaIndex(path)
 	if err != nil {
-		return nil, errors.Wrapf(err, "stat %v", name)
+		return nil, fmt.Errorf("stat %v: %w", name, err)
 	}
 	return pseudoFileInfo{name, index}, nil
 }
@@ -463,17 +472,12 @@ func (fs *PseudoFS) Close() error {
 		}
 		delete(fs.files, fd)
 	}
-	var err *multierror.Error
+	var err error
 	for fd, d := range fs.dirs {
-		if e := d.Close(); e != nil {
-			err = multierror.Append(err, e)
-		}
+		err = multierr.Append(err, d.Close())
 		delete(fs.dirs, fd)
 	}
-	if e := fs.hosts.Close(); e != nil {
-		err = multierror.Append(err, e)
-	}
-	return err.ErrorOrNil()
+	return multierr.Append(err, fs.hosts.Close())
 }
 
 // NewFileSystem returns a new pseudo-filesystem rooted at root, which must be a
@@ -550,6 +554,10 @@ func (pf PseudoFile) Close() error {
 	}
 	// f is only truly deleted if it has no pending writes; otherwise, it sticks
 	// around until the next flush
+	if f == nil {
+		log.Println("f is nil")
+		return nil
+	}
 	if len(f.pendingWrites) == 0 {
 		delete(pf.fs.files, pf.fd)
 	}
@@ -625,6 +633,10 @@ func (pf PseudoFile) ReadAtP(p []byte, off int64) (int, error) {
 	} else if d != nil {
 		return 0, ErrDirectory
 	}
+	if f == nil {
+		log.Println("f is nil")
+		return 0, nil
+	}
 
 	splitSize := len(p) / (len(f.m.Hosts) / f.m.MinShards)
 	if splitSize == 0 {
@@ -671,6 +683,11 @@ func (pf PseudoFile) WriteAt(p []byte, off int64) (int, error) {
 	} else if d != nil {
 		return 0, ErrDirectory
 	}
+	if f == nil {
+		log.Println("f is nil")
+		return 0, nil
+	}
+
 	if pf.appendOnly() && off != f.filesize() {
 		return 0, ErrAppendOnly
 	}

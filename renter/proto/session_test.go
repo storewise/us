@@ -3,10 +3,10 @@ package proto
 import (
 	"bytes"
 	"crypto/ed25519"
+	"errors"
 	"io/ioutil"
 	"testing"
 
-	"github.com/pkg/errors"
 	"gitlab.com/NebulousLabs/Sia/crypto"
 	"gitlab.com/NebulousLabs/Sia/types"
 	"gitlab.com/NebulousLabs/encoding"
@@ -39,8 +39,6 @@ func (stubTpool) FeeEstimate() (_, _ types.Currency, _ error)                   
 // createTestingPair creates a renter and host, initiates a Session between
 // them, and forms and locks a contract.
 func createTestingPair(tb testing.TB) (*Session, *ghost.Host) {
-	tb.Helper()
-
 	host := ghost.New(tb, ghost.FreeSettings, stubWallet{}, stubTpool{})
 
 	s, err := NewUnlockedSession(host.Settings.NetAddress, host.PublicKey, 0)
@@ -174,7 +172,8 @@ func TestRenew(t *testing.T) {
 	}
 
 	// attempting to lock the old contract should return ErrContractFinalized
-	if err := renter.Lock(oldID, oldKey, 0); errors.Cause(err) != ErrContractFinalized {
+	err = renter.Lock(oldID, oldKey, 0)
+	if !errors.Is(err, ErrContractFinalized) {
 		t.Fatal("expected ErrContractFinalized, got", err)
 	}
 	renter.Close()

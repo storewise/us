@@ -2,13 +2,16 @@ package proto
 
 import (
 	"crypto/ed25519"
+	"errors"
+	"fmt"
 	"math/big"
+	"net"
 	"time"
 
-	"github.com/hashicorp/go-multierror"
-	"github.com/pkg/errors"
 	"gitlab.com/NebulousLabs/Sia/crypto"
 	"gitlab.com/NebulousLabs/Sia/types"
+	"go.uber.org/multierr"
+
 	"lukechampine.com/us/ed25519hash"
 	"lukechampine.com/us/hostdb"
 	"lukechampine.com/us/renterhost"
@@ -29,8 +32,8 @@ func FormContract(w Wallet, tpool TransactionPool, key ed25519.PrivateKey, host 
 	}
 	s.host = host
 	defer func() {
-		if e := s.Close(); e != nil {
-			err = multierror.Append(err, e)
+		if e := s.Close(); e != nil && !errors.Is(e, net.ErrClosed) {
+			err = multierr.Append(err, e)
 		}
 	}()
 	return s.FormContract(w, tpool, key, renterPayout, startHeight, endHeight)
@@ -46,7 +49,7 @@ func (s *Session) FormContract(w Wallet, tpool TransactionPool, key ed25519.Priv
 	// get a renter address for the file contract's valid/missed outputs
 	refundAddr, err := w.Address()
 	if err != nil {
-		return ContractRevision{}, nil, errors.Wrap(err, "could not get an address to use")
+		return ContractRevision{}, nil, fmt.Errorf("could not get an address to use: %w", err)
 	}
 
 	// create unlock conditions
@@ -109,7 +112,7 @@ func (s *Session) FormContract(w Wallet, tpool TransactionPool, key ed25519.Priv
 	// tax, and a transaction fee.
 	_, maxFee, err := tpool.FeeEstimate()
 	if err != nil {
-		return ContractRevision{}, nil, errors.Wrap(err, "could not estimate transaction fee")
+		return ContractRevision{}, nil, fmt.Errorf("could not estimate transaction fee: %w", err)
 	}
 	fee := maxFee.Mul64(estTxnSize)
 	totalCost := renterPayout.Add(s.host.ContractPrice).Add(types.Tax(startHeight, fc.Payout)).Add(fee)
@@ -159,10 +162,10 @@ func (s *Session) FormContract(w Wallet, tpool TransactionPool, key ed25519.Priv
 	txn.TransactionSignatures = addedSignatures
 	err = w.SignTransaction(&txn, toSign)
 	if err != nil {
-		err = errors.Wrap(err, "failed to sign transaction")
+		err = fmt.Errorf("failed to sign transaction: %w", err)
 		// don't want to reveal too much
 		if e := s.sess.WriteResponse(nil, errors.New("internal error")); e != nil {
-			err = multierror.Append(err, e)
+			err = multierr.Append(err, e)
 		}
 		return ContractRevision{}, nil, err
 	}
