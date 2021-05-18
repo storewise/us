@@ -2,12 +2,13 @@ package renterutil
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"log"
 	"net"
 	"strings"
 	"time"
 
-	"github.com/pkg/errors"
 	"gitlab.com/NebulousLabs/Sia/types"
 	"go.uber.org/multierr"
 	"golang.org/x/sync/semaphore"
@@ -193,7 +194,7 @@ func (set *HostSet) AddHost(c renter.Contract) {
 		}
 		hostIP, err := set.hkr.ResolveHostKey(c.HostKey)
 		if err != nil {
-			return errors.Wrap(err, "could not resolve host key")
+			return fmt.Errorf("could not resolve host key: %w", err)
 		}
 		// create and lock the session manually so that we can use our custom
 		// lock timeout

@@ -5,6 +5,8 @@ package renterutil // import "lukechampine.com/us/renter/renterutil"
 import (
 	"bytes"
 	"context"
+	"errors"
+	"fmt"
 	"io"
 	"log"
 	"os"
@@ -13,7 +15,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/pkg/errors"
 	"gitlab.com/NebulousLabs/Sia/crypto"
 	"go.uber.org/multierr"
 
@@ -87,12 +88,12 @@ func (fs *PseudoFS) Chmod(name string, mode os.FileMode) error {
 
 	m, err := renter.ReadMetaFile(path)
 	if err != nil {
-		return errors.Wrapf(err, "chmod %v", path)
+		return fmt.Errorf("chmod %v: %w", path, err)
 	}
 	m.Mode = mode
 	m.ModTime = time.Now()
 	if err := renter.WriteMetaFile(path, m); err != nil {
-		return errors.Wrapf(err, "chmod %v", path)
+		return fmt.Errorf("chmod %v: %w", path, err)
 	}
 	return nil
 }
@@ -158,8 +159,10 @@ func (fs *PseudoFS) OpenFile(name string, flag int, perm os.FileMode, minShards 
 					}
 				}
 				if len(missing) > 0 {
-					return nil, errors.Errorf("insufficient contracts: need a contract from each of these hosts: %v",
-						strings.Join(missing, " "))
+					return nil, fmt.Errorf(
+						"insufficient contracts: need a contract from each of these hosts: %v",
+						strings.Join(missing, " "),
+					)
 				}
 			}
 			of.closed = false
@@ -200,7 +203,7 @@ func (fs *PseudoFS) OpenFile(name string, flag int, perm os.FileMode, minShards 
 		var err error
 		m, err = renter.ReadMetaFile(path)
 		if err != nil {
-			return nil, errors.Wrapf(err, "open %v", name)
+			return nil, fmt.Errorf("open %v: %w", name, err)
 		}
 		// check whether we have a session for each of the file's hosts
 		var missing []string
@@ -212,14 +215,19 @@ func (fs *PseudoFS) OpenFile(name string, flag int, perm os.FileMode, minShards 
 		if flag&rwmask == os.O_RDONLY {
 			// only need m.MinShards hosts in order to read
 			if have := len(m.Hosts) - len(missing); have < m.MinShards {
-				return nil, errors.Errorf("insufficient contracts: need a contract from at least %v of these hosts: %v",
-					m.MinShards-have, strings.Join(missing, " "))
+				return nil, fmt.Errorf(
+					"insufficient contracts: need a contract from at least %v of these hosts: %v",
+					m.MinShards-have,
+					strings.Join(missing, " "),
+				)
 			}
 		} else {
 			// need all hosts in order to write
 			if len(missing) > 0 {
-				return nil, errors.Errorf("insufficient contracts: need a contract from each of these hosts: %v",
-					strings.Join(missing, " "))
+				return nil, fmt.Errorf(
+					"insufficient contracts: need a contract from each of these hosts: %v",
+					strings.Join(missing, " "),
+				)
 			}
 		}
 	}
@@ -445,7 +453,7 @@ func (fs *PseudoFS) Stat(name string) (os.FileInfo, error) {
 	path += metafileExt
 	index, err := renter.ReadMetaIndex(path)
 	if err != nil {
-		return nil, errors.Wrapf(err, "stat %v", name)
+		return nil, fmt.Errorf("stat %v: %w", name, err)
 	}
 	return pseudoFileInfo{name, index}, nil
 }
