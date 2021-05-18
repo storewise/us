@@ -2,6 +2,7 @@ package renterutil
 
 import (
 	"bytes"
+	"context"
 	"crypto/ed25519"
 	"encoding/hex"
 	"io"
@@ -563,7 +564,7 @@ func TestFileSystemDelete(t *testing.T) {
 	expectStoredSectors := func(n int) {
 		t.Helper()
 		for hostKey := range fs.hosts.sessions {
-			h, err := fs.hosts.acquire(hostKey)
+			h, err := fs.hosts.acquire(context.TODO(), hostKey)
 			if err != nil {
 				t.Fatal(err)
 			}

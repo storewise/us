@@ -2,6 +2,7 @@ package renterutil
 
 import (
 	"bytes"
+	"context"
 	"io"
 	"os"
 	"time"
@@ -274,7 +275,7 @@ func (fs *PseudoFS) flushSectors() error {
 		numHosts++
 		go func(hostKey hostdb.HostPublicKey, sb *renter.SectorBuilder) {
 			sector := sb.Finish()
-			h, err := fs.hosts.acquire(hostKey)
+			h, err := fs.hosts.acquire(context.TODO(), hostKey)
 			if err != nil {
 				errChan <- &HostError{hostKey, err}
 				return
@@ -419,7 +420,7 @@ func (fs *PseudoFS) fileReadAt(f *openMetaFile, p []byte, off int64) (int, error
 				hostKey := f.m.Hosts[req.shardIndex]
 				s, err := fs.hosts.tryAcquire(hostKey)
 				if err == ErrHostAcquired && req.block {
-					s, err = fs.hosts.acquire(hostKey)
+					s, err = fs.hosts.acquire(context.TODO(), hostKey)
 				}
 				if err != nil {
 					respChan <- &HostError{hostKey, err}
@@ -606,7 +607,7 @@ func (fs *PseudoFS) fileFree(f *openMetaFile) error {
 	for shardIndex, hostKey := range f.m.Hosts {
 		shard := f.m.Shards[shardIndex]
 		err := func() error {
-			h, err := fs.hosts.acquire(hostKey)
+			h, err := fs.hosts.acquire(context.TODO(), hostKey)
 			if err != nil {
 				return err
 			}

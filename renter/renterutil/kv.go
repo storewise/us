@@ -292,7 +292,7 @@ func (sbb *SmallBlobBuffer) Upload(ctx context.Context, hosts *HostSet) error {
 			for req := range reqChan {
 				sess, err := hosts.tryAcquire(req.hostKey)
 				if err == ErrHostAcquired && req.block {
-					sess, err = hosts.acquire(req.hostKey)
+					sess, err = hosts.acquire(ctx, req.hostKey)
 				}
 				if err != nil {
 					respChan <- resp{req, err}

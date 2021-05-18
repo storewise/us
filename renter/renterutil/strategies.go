@@ -36,7 +36,7 @@ func acquireCtx(ctx context.Context, hosts *HostSet, hostKey hostdb.HostPublicKe
 	go func() {
 		sess, err = hosts.tryAcquire(hostKey)
 		if err == ErrHostAcquired && block {
-			sess, err = hosts.acquire(hostKey)
+			sess, err = hosts.acquire(ctx, hostKey)
 		}
 		select {
 		case done <- struct{}{}:

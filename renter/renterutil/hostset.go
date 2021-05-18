@@ -1,14 +1,17 @@
 package renterutil
 
 import (
+	"context"
+	"log"
+	"net"
 	"strings"
-	"sync"
 	"time"
-
-	"github.com/hashicorp/go-multierror"
 
 	"github.com/pkg/errors"
 	"gitlab.com/NebulousLabs/Sia/types"
+	"go.uber.org/multierr"
+	"golang.org/x/sync/semaphore"
+
 	"lukechampine.com/us/hostdb"
 	"lukechampine.com/us/renter"
 	"lukechampine.com/us/renter/proto"
@@ -59,39 +62,10 @@ func (hse HostErrorSet) Is(target error) bool {
 	return false
 }
 
-type tryLock struct {
-	c    chan struct{}
-	once sync.Once
-}
-
-func (mu *tryLock) init() {
-	mu.c = make(chan struct{}, 1)
-	mu.c <- struct{}{}
-}
-
-func (mu *tryLock) Lock() {
-	mu.once.Do(mu.init)
-	<-mu.c
-}
-
-func (mu *tryLock) TryLock() bool {
-	mu.once.Do(mu.init)
-	select {
-	case <-mu.c:
-		return true
-	default:
-		return false
-	}
-}
-
-func (mu *tryLock) Unlock() {
-	mu.c <- struct{}{}
-}
-
 type lockedHost struct {
 	reconnect func() error
 	s         *proto.Session
-	mu        tryLock
+	mu        *semaphore.Weighted
 }
 
 // A HostSet is a collection of renter-host protocol sessions.
@@ -115,28 +89,32 @@ func reconnectAfterClose() error { return ErrHostSetClosed }
 func (set *HostSet) Close() error {
 	var err error
 	for hostKey, lh := range set.sessions {
-		lh.mu.Lock()
+		if multierr.AppendInto(&err, lh.mu.Acquire(context.Background(), 1)) {
+			continue
+		}
 		if lh.s != nil {
-			if e := lh.s.Close(); e != nil && !strings.Contains(e.Error(), "use of closed network connection") {
-				err = multierror.Append(err, e)
+			if e := lh.s.Close(); e != nil && !errors.Is(e, net.ErrClosed) {
+				err = multierr.Append(err, e)
 			}
 			lh.s = nil
 		}
 		lh.reconnect = reconnectAfterClose
 		delete(set.sessions, hostKey)
-		lh.mu.Unlock()
+		lh.mu.Release(1)
 	}
 	return err
 }
 
-func (set *HostSet) acquire(host hostdb.HostPublicKey) (*proto.Session, error) {
+func (set *HostSet) acquire(ctx context.Context, host hostdb.HostPublicKey) (*proto.Session, error) {
 	ls, ok := set.sessions[host]
 	if !ok {
 		return nil, ErrNoHost
 	}
-	ls.mu.Lock()
+	if err := ls.mu.Acquire(ctx, 1); err != nil {
+		return nil, err
+	}
 	if err := ls.reconnect(); err != nil {
-		ls.mu.Unlock()
+		ls.mu.Release(1)
 		return nil, err
 	}
 	return ls.s, nil
@@ -147,11 +125,11 @@ func (set *HostSet) tryAcquire(host hostdb.HostPublicKey) (*proto.Session, error
 	if !ok {
 		return nil, ErrNoHost
 	}
-	if !ls.mu.TryLock() {
+	if !ls.mu.TryAcquire(1) {
 		return nil, ErrHostAcquired
 	}
 	if err := ls.reconnect(); err != nil {
-		ls.mu.Unlock()
+		ls.mu.Release(1)
 		return nil, err
 	}
 	return ls.s, nil
@@ -162,7 +140,7 @@ func (set *HostSet) release(host hostdb.HostPublicKey) {
 	if lh.s.IsClosed() {
 		lh.s = nil // force a reconnect
 	}
-	lh.mu.Unlock()
+	lh.mu.Release(1)
 }
 
 // SetLockTimeout sets the timeout used for all Lock RPCs in Sessions initiated
@@ -174,7 +152,9 @@ func (set *HostSet) SetOnConnect(fn func(*proto.Session)) { set.onConnect = fn }
 
 // AddHost adds a host to the set for later use.
 func (set *HostSet) AddHost(c renter.Contract) {
-	lh := new(lockedHost)
+	lh := &lockedHost{
+		mu: semaphore.NewWeighted(1),
+	}
 	// lazy connection function
 	var lastSeen time.Time
 	lh.reconnect = func() error {
@@ -199,7 +179,9 @@ func (set *HostSet) AddHost(c renter.Contract) {
 			}
 			// connection timed out, or some other error occurred; close our
 			// end (just in case) and fallthrough to the reconnection logic
-			lh.s.Close()
+			if err := lh.s.Close(); err != nil {
+				log.Println("failed to close a session:", err)
+			}
 		}
 		hostIP, err := set.hkr.ResolveHostKey(c.HostKey)
 		if err != nil {
@@ -212,10 +194,10 @@ func (set *HostSet) AddHost(c renter.Contract) {
 			return err
 		}
 		if err := lh.s.Lock(c.ID, c.RenterKey, set.lockTimeout); err != nil {
-			lh.s.Close()
+			err = multierr.Append(err, lh.s.Close())
 			return err
 		} else if _, err := lh.s.Settings(); err != nil {
-			lh.s.Close()
+			err = multierr.Append(err, lh.s.Close())
 			return err
 		}
 		set.onConnect(lh.s)
@@ -231,7 +213,9 @@ func (set *HostSet) RemoveHost(host hostdb.HostPublicKey) {
 	if !ok {
 		return
 	}
-	lh.s.Close()
+	if err := lh.s.Close(); err != nil {
+		log.Println("failed to close a session:", err)
+	}
 	delete(set.sessions, host)
 }
 

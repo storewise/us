@@ -4,6 +4,7 @@ package renterutil // import "lukechampine.com/us/renter/renterutil"
 
 import (
 	"bytes"
+	"context"
 	"io"
 	"os"
 	"path/filepath"
@@ -306,7 +307,7 @@ func (fs *PseudoFS) GC() error {
 	hostRoots := make(map[hostdb.HostPublicKey]map[crypto.Hash]struct{})
 	for hostKey := range fs.hosts.sessions {
 		err := func() error {
-			h, err := fs.hosts.acquire(hostKey)
+			h, err := fs.hosts.acquire(context.TODO(), hostKey)
 			if err != nil {
 				return err
 			}
@@ -378,7 +379,7 @@ func (fs *PseudoFS) GC() error {
 	// delete the remaining sectors
 	for hostKey, rootsMap := range hostRoots {
 		err := func() error {
-			h, err := fs.hosts.acquire(hostKey)
+			h, err := fs.hosts.acquire(context.TODO(), hostKey)
 			if err != nil {
 				return err
 			}
