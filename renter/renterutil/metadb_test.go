@@ -265,6 +265,73 @@ func TestBoltMetaDB_DeleteBlob(t *testing.T) {
 	length := uint64(30 * 1024 * 1024)
 
 	db := newTempBoldMetaDB(t)
+	var (
+		chunkIDs []uint64
+		shardIDs []uint64
+	)
+	blob := DBBlob{
+		Key:  []byte("key"),
+		Seed: randomSeed(t),
+	}
+	for i := 0; i != chunkSize; i += 1 {
+		chunk, err := db.AddChunk(m, n, length)
+		if err != nil {
+			t.Error("failed to add a chunk:", err)
+		}
+		chunkIDs = append(chunkIDs, chunk.ID)
+
+		for j := 0; j != n; j += 1 {
+			shard := randomShard(t)
+
+			sid, err := db.AddShard(shard)
+			if err != nil {
+				t.Error("failed to add a shard:", err)
+			}
+			if err := db.SetChunkShard(chunk.ID, j, sid); err != nil {
+				t.Error("failed to set chunk shard:", err)
+			}
+			shardIDs = append(shardIDs, sid)
+		}
+		blob.Chunks = append(blob.Chunks, chunk.ID)
+	}
+	if err := db.AddBlob(blob); err != nil {
+		t.Error("failed to add a blob:", err)
+	}
+
+	err := db.DeleteBlob(blob.Key)
+	if err != nil {
+		t.Error("failed to delete a blob:", err)
+	}
+
+	_, err = db.Blob(blob.Key)
+	if !errors.Is(err, ErrKeyNotFound) {
+		t.Errorf("expect %v, got %v", ErrKeyNotFound, err)
+	}
+
+	if err := db.bdb.View(func(tx *bolt.Tx) error {
+		for _, cid := range chunkIDs {
+			if len(tx.Bucket(bucketChunks).Get(idToKey(cid))) != 0 {
+				t.Errorf("chunk %v still exists", cid)
+			}
+		}
+		for _, sid := range shardIDs {
+			if len(tx.Bucket(bucketShards).Get(idToKey(sid))) != 0 {
+				t.Errorf("shard %v still exists", sid)
+			}
+		}
+		return nil
+	}); err != nil {
+		t.Error("View returns an error:", err)
+	}
+}
+
+func TestBoltMetaDB_Sectors(t *testing.T) {
+	chunkSize := 10
+	m := 10
+	n := 5
+	length := uint64(30 * 1024 * 1024)
+
+	db := newTempBoldMetaDB(t)
 	sectors := make(map[hostdb.HostPublicKey][]crypto.Hash)
 	var (
 		chunkIDs []uint64
@@ -300,33 +367,12 @@ func TestBoltMetaDB_DeleteBlob(t *testing.T) {
 		t.Error("failed to add a blob:", err)
 	}
 
-	res, err := db.DeleteBlob(blob.Key)
+	res, err := db.Sectors(blob.Key)
 	if err != nil {
 		t.Error("failed to delete a blob:", err)
 	}
 	if !reflect.DeepEqual(res, sectors) {
 		t.Errorf("expect %v, got %v", sectors, res)
-	}
-
-	_, err = db.Blob(blob.Key)
-	if !errors.Is(err, ErrKeyNotFound) {
-		t.Errorf("expect %v, got %v", ErrKeyNotFound, err)
-	}
-
-	if err := db.bdb.View(func(tx *bolt.Tx) error {
-		for _, cid := range chunkIDs {
-			if len(tx.Bucket(bucketChunks).Get(idToKey(cid))) != 0 {
-				t.Errorf("chunk %v still exists", cid)
-			}
-		}
-		for _, sid := range shardIDs {
-			if len(tx.Bucket(bucketShards).Get(idToKey(sid))) != 0 {
-				t.Errorf("shard %v still exists", sid)
-			}
-		}
-		return nil
-	}); err != nil {
-		t.Error("View returns an error:", err)
 	}
 }
 

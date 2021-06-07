@@ -3,6 +3,7 @@ package renterutil
 import (
 	"encoding/binary"
 	"errors"
+	"io"
 	"sort"
 	"sync"
 	"time"
@@ -45,10 +46,12 @@ type DBShard struct {
 
 // A MetaDB stores the metadata of blobs stored on Sia hosts.
 type MetaDB interface {
+	io.Closer
+
 	AddBlob(b DBBlob) error
 	Blob(key []byte) (DBBlob, error)
 	RenameBlob(oldKey, newKey []byte) error
-	DeleteBlob(key []byte) (map[hostdb.HostPublicKey][]crypto.Hash, error)
+	DeleteBlob(key []byte) error
 	ForEachBlob(func(key []byte) error) error
 
 	AddChunk(m, n int, length uint64) (DBChunk, error)
@@ -58,14 +61,12 @@ type MetaDB interface {
 	AddShard(s DBShard) (uint64, error)
 	Shard(id uint64) (DBShard, error)
 
-	UnreferencedSectors() (map[hostdb.HostPublicKey][]crypto.Hash, error)
+	Sectors(key []byte) (map[hostdb.HostPublicKey][]crypto.Hash, error)
 
 	AddMetadata(key, val []byte) error
 	Metadata(key []byte) ([]byte, error)
 	DeleteMetadata(key []byte) error
 	RenameMetadata(oldKey, newKey []byte) error
-
-	Close() error
 }
 
 // EphemeralMetaDB implements MetaDB in memory.
@@ -188,12 +189,12 @@ func (db *EphemeralMetaDB) RenameBlob(oldKey, newKey []byte) error {
 }
 
 // DeleteBlob implements MetaDB.
-func (db *EphemeralMetaDB) DeleteBlob(key []byte) (map[hostdb.HostPublicKey][]crypto.Hash, error) {
+func (db *EphemeralMetaDB) DeleteBlob(key []byte) error {
 	db.mu.Lock()
 	defer db.mu.Unlock()
 	b, ok := db.blobs[string(key)]
 	if !ok {
-		return nil, ErrKeyNotFound
+		return ErrKeyNotFound
 	}
 	for _, cid := range b.Chunks {
 		for _, sid := range db.chunks[cid-1].Shards {
@@ -201,7 +202,7 @@ func (db *EphemeralMetaDB) DeleteBlob(key []byte) (map[hostdb.HostPublicKey][]cr
 		}
 	}
 	delete(db.blobs, string(key))
-	return db.UnreferencedSectors()
+	return nil
 }
 
 // ForEachBlob implements MetaDB.
@@ -234,6 +235,24 @@ func (db *EphemeralMetaDB) UnreferencedSectors() (map[hostdb.HostPublicKey][]cry
 		}
 	}
 	return m, nil
+}
+
+func (db *EphemeralMetaDB) Sectors(key []byte) (map[hostdb.HostPublicKey][]crypto.Hash, error) {
+	db.mu.Lock()
+	defer db.mu.Unlock()
+
+	blob, ok := db.blobs[string(key)]
+	if !ok {
+		return nil, ErrKeyNotFound
+	}
+	res := make(map[hostdb.HostPublicKey][]crypto.Hash)
+	for _, c := range blob.Chunks {
+		for _, s := range db.chunks[c].Shards {
+			shard := db.shards[s]
+			res[shard.HostKey] = append(res[shard.HostKey], db.shards[s].SectorRoot)
+		}
+	}
+	return res, nil
 }
 
 // AddMetadata implements MetaDB.
@@ -466,10 +485,9 @@ func (db *BoltMetaDB) RenameBlob(oldKey, newKey []byte) error {
 	})
 }
 
-// DeleteBlob implements MetaDB.
-func (db *BoltMetaDB) DeleteBlob(key []byte) (map[hostdb.HostPublicKey][]crypto.Hash, error) {
+func (db *BoltMetaDB) Sectors(key []byte) (map[hostdb.HostPublicKey][]crypto.Hash, error) {
 	sectors := make(map[hostdb.HostPublicKey][]crypto.Hash)
-	if err := db.bdb.Update(func(tx *bolt.Tx) error {
+	if err := db.bdb.View(func(tx *bolt.Tx) error {
 		blob, err := db.blob(tx, key)
 		if err != nil {
 			return err
@@ -487,6 +505,29 @@ func (db *BoltMetaDB) DeleteBlob(key []byte) (map[hostdb.HostPublicKey][]crypto.
 					continue
 				}
 				sectors[shard.HostKey] = append(sectors[shard.HostKey], shard.SectorRoot)
+			}
+		}
+		return err
+	}); err != nil {
+		return nil, err
+	}
+	return sectors, nil
+}
+
+// DeleteBlob implements MetaDB.
+func (db *BoltMetaDB) DeleteBlob(key []byte) error {
+	if err := db.bdb.Update(func(tx *bolt.Tx) error {
+		blob, err := db.blob(tx, key)
+		if err != nil {
+			return err
+		}
+		for _, cid := range blob.Chunks {
+			chunk, e := db.chunk(tx, cid)
+			if e != nil {
+				err = multierr.Append(err, e)
+				continue
+			}
+			for _, sid := range chunk.Shards {
 				if e = db.deleteShard(tx, sid); e != nil {
 					err = multierr.Append(err, e)
 				}
@@ -500,9 +541,9 @@ func (db *BoltMetaDB) DeleteBlob(key []byte) (map[hostdb.HostPublicKey][]crypto.
 		}
 		return err
 	}); err != nil {
-		return nil, err
+		return err
 	}
-	return sectors, nil
+	return nil
 }
 
 // ForEachBlob implements MetaDB.
@@ -512,12 +553,6 @@ func (db *BoltMetaDB) ForEachBlob(fn func(key []byte) error) error {
 			return fn(k)
 		})
 	})
-}
-
-// UnreferencedSectors returns all sectors that are not referenced by any blob
-// in the db.
-func (db *BoltMetaDB) UnreferencedSectors() (map[hostdb.HostPublicKey][]crypto.Hash, error) {
-	return nil, nil // TODO
 }
 
 // AddMetadata adds metadata that associated with the key.

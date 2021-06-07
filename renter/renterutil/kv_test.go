@@ -382,28 +382,6 @@ func TestKVMigrate(t *testing.T) {
 	}
 }
 
-func TestKVGC(t *testing.T) {
-	ctx := context.Background()
-	kv := createTestingKV(t, 3, 2, 3)
-
-	bigdata := frand.Bytes(renterhost.SectorSize * 4)
-	err := kv.PutBytes(ctx, []byte("foo"), bigdata)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	if err := kv.Delete(ctx, []byte("foo")); err != nil {
-		t.Fatal(err)
-	}
-	if err := kv.GC(ctx); err != nil {
-		t.Fatal(err)
-	}
-
-	if _, err := kv.GetBytes(ctx, []byte("foo")); err != ErrKeyNotFound {
-		t.Fatalf("expected %v, got %v", ErrKeyNotFound, err)
-	}
-}
-
 func TestKVPutGetParallel(t *testing.T) {
 	if testing.Short() {
 		t.SkipNow()

@@ -161,30 +161,21 @@ func (kv *PseudoKV) Migrate(ctx context.Context, key []byte, whitelist []hostdb.
 }
 
 // Delete deletes the value associated with key.
-//
-// The actual data stored on hosts is not deleted. To delete host data, use
-// PseudoKV.GC.
 func (kv PseudoKV) Delete(ctx context.Context, key []byte) error {
-	sectors, err := kv.DB.DeleteBlob(key)
+	sectors, err := kv.DB.Sectors(key)
 	if err != nil {
 		return err
 	}
-	return kv.Deleter.DeleteSectors(ctx, kv.DB, sectors)
+	if err := kv.Deleter.DeleteSectors(ctx, kv.DB, sectors); err != nil {
+		return err
+	}
+	err = kv.DB.DeleteBlob(key)
+	return err
 }
 
 // Rename renames a blob.
 func (kv PseudoKV) Rename(oldKey, newKey []byte) error {
 	return kv.DB.RenameBlob(oldKey, newKey)
-}
-
-// GC deletes from hosts all sectors that are not currently associated with any
-// value.
-func (kv PseudoKV) GC(ctx context.Context) error {
-	sectors, err := kv.DB.UnreferencedSectors()
-	if err != nil {
-		return err
-	}
-	return kv.Deleter.DeleteSectors(ctx, kv.DB, sectors)
 }
 
 // Close implements io.Closer.
