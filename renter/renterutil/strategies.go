@@ -128,7 +128,8 @@ type ChunkUploader interface {
 
 // SerialChunkUploader uploads chunks to hosts one shard at a time.
 type SerialChunkUploader struct {
-	Hosts *HostSet
+	Hosts    *HostSet
+	Executor RequestExecutor
 }
 
 // UploadChunk implements ChunkUploader.
@@ -175,11 +176,21 @@ func (scu SerialChunkUploader) UploadChunk(ctx context.Context, db MetaDB, c DBC
 		nonce := renter.RandomNonce()
 		sb.Append(shard, key, nonce)
 		sector := sb.Finish()
-		h, err := acquireCtx(ctx, scu.Hosts, hostKey, true)
+
+		var h *proto.Session
+		err := scu.Executor.Execute(ctx, func(ctx context.Context) (err error) {
+			h, err = acquireCtx(ctx, scu.Hosts, hostKey, true)
+			return err
+		})
 		if err != nil {
 			return &HostError{hostKey, err}
 		}
-		root, err := uploadCtx(ctx, h, sector)
+
+		var root crypto.Hash
+		err = scu.Executor.Execute(ctx, func(ctx context.Context) error {
+			root, err = uploadCtx(ctx, h, sector)
+			return err
+		})
 		scu.Hosts.release(hostKey)
 		if err != nil {
 			return &HostError{hostKey, err}
@@ -197,7 +208,8 @@ func (scu SerialChunkUploader) UploadChunk(ctx context.Context, db MetaDB, c DBC
 
 // ParallelChunkUploader uploads the shards of a chunk in parallel.
 type ParallelChunkUploader struct {
-	Hosts *HostSet
+	Hosts    *HostSet
+	Executor RequestExecutor
 }
 
 // UploadChunk implements ChunkUploader.
@@ -262,13 +274,21 @@ func (pcu ParallelChunkUploader) UploadChunk(ctx context.Context, db MetaDB, c D
 		go func() {
 			defer wg.Done()
 			for req := range reqChan {
-				sess, err := acquireCtx(ctx, pcu.Hosts, req.hostKey, req.block)
+				var sess *proto.Session
+				err := pcu.Executor.Execute(ctx, func(ctx context.Context) (err error) {
+					sess, err = acquireCtx(ctx, pcu.Hosts, req.hostKey, req.block)
+					return err
+				})
 				if err != nil {
 					respChan <- resp{req, 0, err}
 					continue
 				}
 
-				root, err := uploadCtx(ctx, sess, req.shard)
+				var root crypto.Hash
+				err = pcu.Executor.Execute(ctx, func(ctx context.Context) error {
+					root, err = uploadCtx(ctx, sess, req.shard)
+					return err
+				})
 				pcu.Hosts.release(req.hostKey)
 				if err != nil {
 					respChan <- resp{req, 0, err}
@@ -389,7 +409,8 @@ func (pcu ParallelChunkUploader) UploadChunk(ctx context.Context, db MetaDB, c D
 // MinimumChunkUploader uploads shards one at a time, stopping as soon as
 // MinShards shards have been uploaded.
 type MinimumChunkUploader struct {
-	Hosts *HostSet
+	Hosts    *HostSet
+	Executor RequestExecutor
 }
 
 // UploadChunk implements ChunkUploader.
@@ -437,11 +458,21 @@ func (mcu MinimumChunkUploader) UploadChunk(ctx context.Context, db MetaDB, c DB
 		offset := uint32(sb.Len())
 		sb.Append(shard, key, nonce)
 		sector := sb.Finish()
-		h, err := acquireCtx(ctx, mcu.Hosts, hostKey, true)
+
+		var h *proto.Session
+		err := mcu.Executor.Execute(ctx, func(ctx context.Context) (err error) {
+			h, err = acquireCtx(ctx, mcu.Hosts, hostKey, true)
+			return err
+		})
 		if err != nil {
 			return &HostError{hostKey, err}
 		}
-		root, err := uploadCtx(ctx, h, sector)
+
+		var root crypto.Hash
+		err = mcu.Executor.Execute(ctx, func(ctx context.Context) error {
+			root, err = uploadCtx(ctx, h, sector)
+			return err
+		})
 		mcu.Hosts.release(hostKey)
 		if err != nil {
 			return &HostError{hostKey, err}
@@ -465,6 +496,7 @@ func (mcu MinimumChunkUploader) UploadChunk(ctx context.Context, db MetaDB, c DB
 type OverdriveChunkUploader struct {
 	Hosts     *HostSet
 	Overdrive int
+	Executor  RequestExecutor
 }
 
 // UploadChunk implements ChunkUploader.
@@ -534,12 +566,21 @@ func (ocu OverdriveChunkUploader) UploadChunk(ctx context.Context, db MetaDB, c 
 		go func() {
 			defer wg.Done()
 			for req := range reqChan {
-				sess, err := acquireCtx(req.ctx, ocu.Hosts, req.hostKey, req.block)
+				var sess *proto.Session
+				err := ocu.Executor.Execute(ctx, func(ctx context.Context) (err error) {
+					sess, err = acquireCtx(req.ctx, ocu.Hosts, req.hostKey, req.block)
+					return err
+				})
 				if err != nil {
 					respChan <- resp{req, crypto.Hash{}, err}
 					continue
 				}
-				root, err := uploadCtx(req.ctx, sess, req.shard)
+
+				var root crypto.Hash
+				err = ocu.Executor.Execute(ctx, func(ctx context.Context) error {
+					root, err = uploadCtx(req.ctx, sess, req.shard)
+					return err
+				})
 				ocu.Hosts.release(req.hostKey)
 				if err != nil {
 					respChan <- resp{req, crypto.Hash{}, err}
@@ -662,7 +703,8 @@ type ChunkDownloader interface {
 
 // SerialChunkDownloader downloads the shards of a chunk one at a time.
 type SerialChunkDownloader struct {
-	Hosts *HostSet
+	Hosts    *HostSet
+	Executor RequestExecutor
 }
 
 // DownloadChunk implements ChunkDownloader.
@@ -686,13 +728,22 @@ func (scd SerialChunkDownloader) DownloadChunk(ctx context.Context, db MetaDB, c
 			end += merkle.SegmentSize
 		}
 		offset, length := start, end-start
-		sess, err := acquireCtx(ctx, scd.Hosts, shard.HostKey, true)
+
+		var sess *proto.Session
+		err = scd.Executor.Execute(ctx, func(ctx context.Context) error {
+			sess, err = acquireCtx(ctx, scd.Hosts, shard.HostKey, true)
+			return err
+		})
 		if err != nil {
 			errs = append(errs, &HostError{shard.HostKey, err})
 			continue
 		}
 
-		section, err := downloadCtx(ctx, sess, key, shard, offset, length)
+		var section []byte
+		err = scd.Executor.Execute(ctx, func(ctx context.Context) error {
+			section, err = downloadCtx(ctx, sess, key, shard, offset, length)
+			return err
+		})
 		scd.Hosts.release(shard.HostKey)
 		if err != nil {
 			errs = append(errs, &HostError{shard.HostKey, err})
@@ -711,7 +762,8 @@ func (scd SerialChunkDownloader) DownloadChunk(ctx context.Context, db MetaDB, c
 
 // ParallelChunkDownloader downloads the shards of a chunk in parallel.
 type ParallelChunkDownloader struct {
-	Hosts *HostSet
+	Hosts    *HostSet
+	Executor RequestExecutor
 }
 
 // DownloadChunk implements ChunkDownloader.
@@ -758,12 +810,21 @@ func (pcd ParallelChunkDownloader) DownloadChunk(ctx context.Context, db MetaDB,
 					continue
 				}
 
-				sess, err := acquireCtx(ctx, pcd.Hosts, shard.HostKey, req.block)
+				var sess *proto.Session
+				err = pcd.Executor.Execute(ctx, func(ctx context.Context) error {
+					sess, err = acquireCtx(ctx, pcd.Hosts, shard.HostKey, req.block)
+					return err
+				})
 				if err != nil {
 					respChan <- resp{req.shardIndex, &HostError{shard.HostKey, err}}
 					continue
 				}
-				section, err := downloadCtx(ctx, sess, key, shard, offset, length)
+
+				var section []byte
+				err = pcd.Executor.Execute(ctx, func(ctx context.Context) error {
+					section, err = downloadCtx(ctx, sess, key, shard, offset, length)
+					return err
+				})
 				pcd.Hosts.release(shard.HostKey)
 				if err != nil {
 					respChan <- resp{req.shardIndex, &HostError{shard.HostKey, err}}
@@ -813,6 +874,7 @@ func (pcd ParallelChunkDownloader) DownloadChunk(ctx context.Context, db MetaDB,
 type OverdriveChunkDownloader struct {
 	Hosts     *HostSet
 	Overdrive int
+	Executor  RequestExecutor
 }
 
 // DownloadChunk implements ChunkDownloader.
@@ -863,13 +925,22 @@ func (ocd OverdriveChunkDownloader) DownloadChunk(ctx context.Context, db MetaDB
 					respChan <- resp{req, nil, &HostError{shard.HostKey, err}}
 					continue
 				}
-				sess, err := acquireCtx(ctx, ocd.Hosts, shard.HostKey, req.block)
+
+				var sess *proto.Session
+				err = ocd.Executor.Execute(ctx, func(ctx context.Context) error {
+					sess, err = acquireCtx(ctx, ocd.Hosts, shard.HostKey, req.block)
+					return err
+				})
 				if err != nil {
 					respChan <- resp{req, nil, &HostError{shard.HostKey, err}}
 					continue
 				}
 
-				section, err := downloadCtx(ctx, sess, key, shard, offset, length)
+				var section []byte
+				err = ocd.Executor.Execute(ctx, func(ctx context.Context) error {
+					section, err = downloadCtx(ctx, sess, key, shard, offset, length)
+					return err
+				})
 				ocd.Hosts.release(shard.HostKey)
 				if err != nil {
 					respChan <- resp{req, nil, &HostError{shard.HostKey, err}}
@@ -1400,17 +1471,25 @@ type SectorDeleter interface {
 
 // SerialSectorDeleter deletes sectors from hosts, one host at a time.
 type SerialSectorDeleter struct {
-	Hosts *HostSet
+	Hosts    *HostSet
+	Executor RequestExecutor
 }
 
 // DeleteSectors implements SectorDeleter.
 func (ssd SerialSectorDeleter) DeleteSectors(ctx context.Context, db MetaDB, sectors map[hostdb.HostPublicKey][]crypto.Hash) error {
 	for hostKey, roots := range sectors {
-		h, err := acquireCtx(ctx, ssd.Hosts, hostKey, true)
+		var h *proto.Session
+		err := ssd.Executor.Execute(ctx, func(ctx context.Context) (err error) {
+			h, err = acquireCtx(ctx, ssd.Hosts, hostKey, true)
+			return err
+		})
 		if err != nil {
 			return err
 		}
-		err = deleteCtx(ctx, h, roots)
+
+		err = ssd.Executor.Execute(ctx, func(ctx context.Context) error {
+			return deleteCtx(ctx, h, roots)
+		})
 		ssd.Hosts.release(hostKey)
 		if err != nil && !errors.Is(err, contractmanager.ErrSectorNotFound) {
 			return err
@@ -1422,7 +1501,8 @@ func (ssd SerialSectorDeleter) DeleteSectors(ctx context.Context, db MetaDB, sec
 
 // ParallelSectorDeleter deletes sectors from hosts in parallel.
 type ParallelSectorDeleter struct {
-	Hosts *HostSet
+	Hosts    *HostSet
+	Executor RequestExecutor
 }
 
 // DeleteSectors implements SectorDeleter.
@@ -1431,11 +1511,18 @@ func (psd ParallelSectorDeleter) DeleteSectors(ctx context.Context, db MetaDB, s
 	for hostKey, roots := range sectors {
 		go func(hostKey hostdb.HostPublicKey, roots []crypto.Hash) {
 			errCh <- func() *HostError {
-				h, err := acquireCtx(ctx, psd.Hosts, hostKey, true)
+				var h *proto.Session
+				err := psd.Executor.Execute(ctx, func(ctx context.Context) (err error) {
+					h, err = acquireCtx(ctx, psd.Hosts, hostKey, true)
+					return err
+				})
 				if err != nil {
 					return &HostError{hostKey, err}
 				}
-				err = deleteCtx(ctx, h, roots)
+
+				err = psd.Executor.Execute(ctx, func(ctx context.Context) error {
+					return deleteCtx(ctx, h, roots)
+				})
 				psd.Hosts.release(hostKey)
 				if err != nil && !errors.Is(err, contractmanager.ErrSectorNotFound) {
 					return &HostError{hostKey, err}

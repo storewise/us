@@ -64,14 +64,23 @@ func createTestingKV(tb testing.TB, numHosts, m, n int) PseudoKV {
 		}
 	}
 	kv := PseudoKV{
-		DB:         db,
-		M:          m,
-		N:          n,
-		UP:         3, // TODO: is this a sane default?
-		DP:         3, // TODO: is this a sane default?
-		Uploader:   ParallelChunkUploader{Hosts: hs},
-		Downloader: ParallelChunkDownloader{Hosts: hs},
-		Deleter:    ParallelSectorDeleter{Hosts: hs},
+		DB: db,
+		M:  m,
+		N:  n,
+		UP: 3, // TODO: is this a sane default?
+		DP: 3, // TODO: is this a sane default?
+		Uploader: ParallelChunkUploader{
+			Hosts:    hs,
+			Executor: DefaultExecutor,
+		},
+		Downloader: ParallelChunkDownloader{
+			Hosts:    hs,
+			Executor: DefaultExecutor,
+		},
+		Deleter: ParallelSectorDeleter{
+			Hosts:    hs,
+			Executor: DefaultExecutor,
+		},
 	}
 	tb.Cleanup(func() {
 		if err := kv.Close(); err != nil {
@@ -234,13 +243,19 @@ func TestKVResumeHost(t *testing.T) {
 	}
 	db := NewEphemeralMetaDB()
 	kv := PseudoKV{
-		DB:         db,
-		M:          2,
-		N:          3,
-		UP:         2,
-		DP:         2,
-		Uploader:   ParallelChunkUploader{Hosts: hs},
-		Downloader: SerialChunkDownloader{Hosts: hs},
+		DB: db,
+		M:  2,
+		N:  3,
+		UP: 2,
+		DP: 2,
+		Uploader: ParallelChunkUploader{
+			Hosts:    hs,
+			Executor: DefaultExecutor,
+		},
+		Downloader: SerialChunkDownloader{
+			Hosts:    hs,
+			Executor: DefaultExecutor,
+		},
 	}
 
 	bigdata := frand.Bytes(renterhost.SectorSize * 4)
@@ -389,8 +404,14 @@ func TestKVPutGetParallel(t *testing.T) {
 	ctx := context.Background()
 	kv := createTestingKV(t, 6, 2, 3)
 	hs := kv.Uploader.(ParallelChunkUploader).Hosts
-	kv.Uploader = ParallelChunkUploader{Hosts: hs}
-	kv.Downloader = ParallelChunkDownloader{Hosts: hs}
+	kv.Uploader = ParallelChunkUploader{
+		Hosts:    hs,
+		Executor: DefaultExecutor,
+	}
+	kv.Downloader = ParallelChunkDownloader{
+		Hosts:    hs,
+		Executor: DefaultExecutor,
+	}
 
 	var kvs [5]struct {
 		smallKey []byte
@@ -464,7 +485,10 @@ func TestKVMinimumAvailability(t *testing.T) {
 	ctx := context.Background()
 	kv := createTestingKV(t, 3, 1, 3)
 	hs := kv.Uploader.(ParallelChunkUploader).Hosts
-	kv.Uploader = MinimumChunkUploader{Hosts: hs}
+	kv.Uploader = MinimumChunkUploader{
+		Hosts:    hs,
+		Executor: DefaultExecutor,
+	}
 
 	bigdata := frand.Bytes(renterhost.SectorSize * 4)
 	err := kv.Put(ctx, []byte("foo"), bytes.NewReader(bigdata))
@@ -492,7 +516,10 @@ func TestKVMinimumAvailability(t *testing.T) {
 	}
 
 	// resume to full redundancy
-	kv.Uploader = ParallelChunkUploader{Hosts: hs}
+	kv.Uploader = ParallelChunkUploader{
+		Hosts:    hs,
+		Executor: DefaultExecutor,
+	}
 	err = kv.Resume(ctx, []byte("foo"), bytes.NewReader(bigdata))
 	if err != nil {
 		t.Fatal(err)
