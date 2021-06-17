@@ -130,6 +130,7 @@ type ChunkUploader interface {
 type SerialChunkUploader struct {
 	Hosts    *HostSet
 	Executor RequestExecutor
+	Recorder RPCStatsRecorder
 }
 
 // UploadChunk implements ChunkUploader.
@@ -185,6 +186,7 @@ func (scu SerialChunkUploader) UploadChunk(ctx context.Context, db MetaDB, c DBC
 		if err != nil {
 			return &HostError{hostKey, err}
 		}
+		h.SetRPCStatsRecorder(newRPCStatsRecorder(ctx, scu.Recorder))
 
 		var root crypto.Hash
 		err = scu.Executor.Execute(ctx, func(ctx context.Context) error {
@@ -210,6 +212,7 @@ func (scu SerialChunkUploader) UploadChunk(ctx context.Context, db MetaDB, c DBC
 type ParallelChunkUploader struct {
 	Hosts    *HostSet
 	Executor RequestExecutor
+	Recorder RPCStatsRecorder
 }
 
 // UploadChunk implements ChunkUploader.
@@ -283,6 +286,7 @@ func (pcu ParallelChunkUploader) UploadChunk(ctx context.Context, db MetaDB, c D
 					respChan <- resp{req, 0, err}
 					continue
 				}
+				sess.SetRPCStatsRecorder(newRPCStatsRecorder(ctx, pcu.Recorder))
 
 				var root crypto.Hash
 				err = pcu.Executor.Execute(ctx, func(ctx context.Context) error {
@@ -411,6 +415,7 @@ func (pcu ParallelChunkUploader) UploadChunk(ctx context.Context, db MetaDB, c D
 type MinimumChunkUploader struct {
 	Hosts    *HostSet
 	Executor RequestExecutor
+	Recorder RPCStatsRecorder
 }
 
 // UploadChunk implements ChunkUploader.
@@ -467,6 +472,7 @@ func (mcu MinimumChunkUploader) UploadChunk(ctx context.Context, db MetaDB, c DB
 		if err != nil {
 			return &HostError{hostKey, err}
 		}
+		h.SetRPCStatsRecorder(newRPCStatsRecorder(ctx, mcu.Recorder))
 
 		var root crypto.Hash
 		err = mcu.Executor.Execute(ctx, func(ctx context.Context) error {
@@ -497,6 +503,7 @@ type OverdriveChunkUploader struct {
 	Hosts     *HostSet
 	Overdrive int
 	Executor  RequestExecutor
+	Recorder  RPCStatsRecorder
 }
 
 // UploadChunk implements ChunkUploader.
@@ -575,6 +582,7 @@ func (ocu OverdriveChunkUploader) UploadChunk(ctx context.Context, db MetaDB, c 
 					respChan <- resp{req, crypto.Hash{}, err}
 					continue
 				}
+				sess.SetRPCStatsRecorder(newRPCStatsRecorder(ctx, ocu.Recorder))
 
 				var root crypto.Hash
 				err = ocu.Executor.Execute(ctx, func(ctx context.Context) error {
@@ -705,6 +713,7 @@ type ChunkDownloader interface {
 type SerialChunkDownloader struct {
 	Hosts    *HostSet
 	Executor RequestExecutor
+	Recorder RPCStatsRecorder
 }
 
 // DownloadChunk implements ChunkDownloader.
@@ -738,6 +747,7 @@ func (scd SerialChunkDownloader) DownloadChunk(ctx context.Context, db MetaDB, c
 			errs = append(errs, &HostError{shard.HostKey, err})
 			continue
 		}
+		sess.SetRPCStatsRecorder(newRPCStatsRecorder(ctx, scd.Recorder))
 
 		var section []byte
 		err = scd.Executor.Execute(ctx, func(ctx context.Context) error {
@@ -764,6 +774,7 @@ func (scd SerialChunkDownloader) DownloadChunk(ctx context.Context, db MetaDB, c
 type ParallelChunkDownloader struct {
 	Hosts    *HostSet
 	Executor RequestExecutor
+	Recorder RPCStatsRecorder
 }
 
 // DownloadChunk implements ChunkDownloader.
@@ -819,6 +830,7 @@ func (pcd ParallelChunkDownloader) DownloadChunk(ctx context.Context, db MetaDB,
 					respChan <- resp{req.shardIndex, &HostError{shard.HostKey, err}}
 					continue
 				}
+				sess.SetRPCStatsRecorder(newRPCStatsRecorder(ctx, pcd.Recorder))
 
 				var section []byte
 				err = pcd.Executor.Execute(ctx, func(ctx context.Context) error {
@@ -875,6 +887,7 @@ type OverdriveChunkDownloader struct {
 	Hosts     *HostSet
 	Overdrive int
 	Executor  RequestExecutor
+	Recorder  RPCStatsRecorder
 }
 
 // DownloadChunk implements ChunkDownloader.
@@ -935,6 +948,7 @@ func (ocd OverdriveChunkDownloader) DownloadChunk(ctx context.Context, db MetaDB
 					respChan <- resp{req, nil, &HostError{shard.HostKey, err}}
 					continue
 				}
+				sess.SetRPCStatsRecorder(newRPCStatsRecorder(ctx, ocd.Recorder))
 
 				var section []byte
 				err = ocd.Executor.Execute(ctx, func(ctx context.Context) error {
@@ -1473,6 +1487,7 @@ type SectorDeleter interface {
 type SerialSectorDeleter struct {
 	Hosts    *HostSet
 	Executor RequestExecutor
+	Recorder RPCStatsRecorder
 }
 
 // DeleteSectors implements SectorDeleter.
@@ -1486,6 +1501,7 @@ func (ssd SerialSectorDeleter) DeleteSectors(ctx context.Context, db MetaDB, sec
 		if err != nil {
 			return err
 		}
+		h.SetRPCStatsRecorder(newRPCStatsRecorder(ctx, ssd.Recorder))
 
 		err = ssd.Executor.Execute(ctx, func(ctx context.Context) error {
 			return deleteCtx(ctx, h, roots)
@@ -1503,6 +1519,7 @@ func (ssd SerialSectorDeleter) DeleteSectors(ctx context.Context, db MetaDB, sec
 type ParallelSectorDeleter struct {
 	Hosts    *HostSet
 	Executor RequestExecutor
+	Recorder RPCStatsRecorder
 }
 
 // DeleteSectors implements SectorDeleter.
@@ -1519,6 +1536,7 @@ func (psd ParallelSectorDeleter) DeleteSectors(ctx context.Context, db MetaDB, s
 				if err != nil {
 					return &HostError{hostKey, err}
 				}
+				h.SetRPCStatsRecorder(newRPCStatsRecorder(ctx, psd.Recorder))
 
 				err = psd.Executor.Execute(ctx, func(ctx context.Context) error {
 					return deleteCtx(ctx, h, roots)

@@ -65,6 +65,12 @@ type RPCStatsRecorder interface {
 	RecordRPCStats(stats RPCStats)
 }
 
+type RPCStatsRecorderFunc func(stats RPCStats)
+
+func (f RPCStatsRecorderFunc) RecordRPCStats(stats RPCStats) {
+	f(stats)
+}
+
 // A ContractRevision contains the most recent revision to a file contract and
 // its signatures.
 type ContractRevision struct {
