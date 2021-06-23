@@ -574,19 +574,19 @@ func (ocu OverdriveChunkUploader) UploadChunk(ctx context.Context, db MetaDB, c 
 			defer wg.Done()
 			for req := range reqChan {
 				var sess *proto.Session
-				err := ocu.Executor.Execute(ctx, func(ctx context.Context) (err error) {
-					sess, err = acquireCtx(req.ctx, ocu.Hosts, req.hostKey, req.block)
+				err := ocu.Executor.Execute(req.ctx, func(ctx context.Context) (err error) {
+					sess, err = acquireCtx(ctx, ocu.Hosts, req.hostKey, req.block)
 					return err
 				})
 				if err != nil {
 					respChan <- resp{req, crypto.Hash{}, err}
 					continue
 				}
-				sess.SetRPCStatsRecorder(newRPCStatsRecorder(ctx, ocu.Recorder))
+				sess.SetRPCStatsRecorder(newRPCStatsRecorder(req.ctx, ocu.Recorder))
 
 				var root crypto.Hash
-				err = ocu.Executor.Execute(ctx, func(ctx context.Context) error {
-					root, err = uploadCtx(req.ctx, sess, req.shard)
+				err = ocu.Executor.Execute(req.ctx, func(ctx context.Context) error {
+					root, err = uploadCtx(ctx, sess, req.shard)
 					return err
 				})
 				ocu.Hosts.release(req.hostKey)
