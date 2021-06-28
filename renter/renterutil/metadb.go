@@ -4,6 +4,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"io"
+	"os"
 	"sort"
 	"sync"
 	"time"
@@ -17,8 +18,14 @@ import (
 	"lukechampine.com/us/renter"
 )
 
-// ErrKeyNotFound is returned when a key is not found in a MetaDB.
-var ErrKeyNotFound = errors.New("key not found")
+var (
+	// ErrKeyNotFound is returned when a key is not found in a MetaDB.
+	ErrKeyNotFound = errors.New("key not found")
+	// errChunkNotFound is returned when a requested chunk is not found.
+	errChunkNotFound = errors.New("chunk not found")
+	// errShardNotFound is returned when a requested shard is not found.
+	errShardNotFound = errors.New("shard not found")
+)
 
 // A DBBlob is the concatenation of one or more chunks.
 type DBBlob struct {
@@ -345,12 +352,21 @@ func (db *BoltMetaDB) Shard(id uint64) (s DBShard, err error) {
 		s, err = db.shard(tx, id)
 		return err
 	})
+	if errors.Is(err, errShardNotFound) {
+		return DBShard{}, os.ErrNotExist
+	}
+
 	return
 }
 
 func (db *BoltMetaDB) shard(tx *bolt.Tx, id uint64) (DBShard, error) {
+	shard := tx.Bucket(bucketShards).Get(idToKey(id))
+	if shard == nil {
+		return DBShard{}, errShardNotFound
+	}
+
 	var s DBShard
-	if err := encoding.Unmarshal(tx.Bucket(bucketShards).Get(idToKey(id)), &s); err != nil {
+	if err := encoding.Unmarshal(shard, &s); err != nil {
 		return DBShard{}, err
 	}
 	return s, nil
@@ -422,12 +438,21 @@ func (db *BoltMetaDB) Chunk(id uint64) (c DBChunk, err error) {
 		c, err = db.chunk(tx, id)
 		return err
 	})
+	if errors.Is(err, errChunkNotFound) {
+		return DBChunk{}, os.ErrNotExist
+	}
+
 	return
 }
 
 func (db *BoltMetaDB) chunk(tx *bolt.Tx, id uint64) (DBChunk, error) {
+	chunk := tx.Bucket(bucketChunks).Get(idToKey(id))
+	if chunk == nil {
+		return DBChunk{}, errChunkNotFound
+	}
+
 	var c DBChunk
-	if err := encoding.Unmarshal(tx.Bucket(bucketChunks).Get(idToKey(id)), &c); err != nil {
+	if err := encoding.Unmarshal(chunk, &c); err != nil {
 		return DBChunk{}, err
 	}
 	return c, nil
@@ -494,13 +519,17 @@ func (db *BoltMetaDB) Sectors(key []byte) (map[hostdb.HostPublicKey][]crypto.Has
 		}
 		for _, cid := range blob.Chunks {
 			chunk, e := db.chunk(tx, cid)
-			if e != nil {
+			if errors.Is(e, errChunkNotFound) {
+				continue
+			} else if e != nil {
 				err = multierr.Append(err, e)
 				continue
 			}
 			for _, sid := range chunk.Shards {
 				shard, e := db.shard(tx, sid)
-				if e != nil {
+				if errors.Is(e, errShardNotFound) {
+					continue
+				} else if e != nil {
 					err = multierr.Append(err, e)
 					continue
 				}
@@ -523,12 +552,15 @@ func (db *BoltMetaDB) DeleteBlob(key []byte) error {
 		}
 		for _, cid := range blob.Chunks {
 			chunk, e := db.chunk(tx, cid)
+			if errors.Is(e, errChunkNotFound) {
+				continue
+			}
 			if e != nil {
 				err = multierr.Append(err, e)
 				continue
 			}
 			for _, sid := range chunk.Shards {
-				if e = db.deleteShard(tx, sid); e != nil {
+				if e = db.deleteShard(tx, sid); e != nil && !errors.Is(e, errShardNotFound) {
 					err = multierr.Append(err, e)
 				}
 			}
