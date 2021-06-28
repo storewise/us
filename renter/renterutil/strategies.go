@@ -24,11 +24,11 @@ var errMigrationSkipped = errors.New("migration is skipped")
 
 func acquireCtx(ctx context.Context, hosts *HostSet, hostKey hostdb.HostPublicKey, block bool) (*proto.Session, error) {
 	// NOTE: we can't smear ctx throughout the HostSet without changing a LOT of
-	// code, so this "leaky" aproach will have to do for now. (It's "leaky"
+	// code, so this "leaky" approach will have to do for now. (It's "leaky"
 	// because the goroutine can stick around long after the ctx is canceled.)
 
 	if ctx.Err() != nil {
-		return nil, ctx.Err()
+		return nil, &HostError{HostKey: hostKey, Err: ctx.Err()}
 	}
 	var sess *proto.Session
 	var err error
@@ -48,16 +48,23 @@ func acquireCtx(ctx context.Context, hosts *HostSet, hostKey hostdb.HostPublicKe
 	}()
 	select {
 	case <-ctx.Done():
-		return nil, ctx.Err()
+		return nil, &HostError{HostKey: hostKey, Err: ctx.Err()}
 	case <-done:
-		return sess, err
+		if err != nil {
+			return nil, &HostError{HostKey: hostKey, Err: err}
+		}
+		return sess, nil
 	}
 }
 
-func uploadCtx(ctx context.Context, sess *proto.Session, shard *[renterhost.SectorSize]byte) (root crypto.Hash, err error) {
+func uploadCtx(ctx context.Context, sess *proto.Session, shard *[renterhost.SectorSize]byte) (crypto.Hash, error) {
 	if ctx.Err() != nil {
-		return crypto.Hash{}, ctx.Err()
+		return crypto.Hash{}, &HostError{HostKey: sess.HostKey(), Err: ctx.Err()}
 	}
+	var (
+		root crypto.Hash
+		err  error
+	)
 	done := make(chan struct{})
 	go func() {
 		root, err = sess.Append(shard)
@@ -70,13 +77,20 @@ func uploadCtx(ctx context.Context, sess *proto.Session, shard *[renterhost.Sect
 		err = ctx.Err()
 	case <-done:
 	}
-	return
+	if err != nil {
+		return crypto.Hash{}, &HostError{HostKey: sess.HostKey(), Err: err}
+	}
+	return root, nil
 }
 
-func downloadCtx(ctx context.Context, sess *proto.Session, key renter.KeySeed, shard DBShard, offset, length int64) (section []byte, err error) {
+func downloadCtx(ctx context.Context, sess *proto.Session, key renter.KeySeed, shard DBShard, offset, length int64) ([]byte, error) {
 	if ctx.Err() != nil {
-		return nil, ctx.Err()
+		return nil, &HostError{HostKey: sess.HostKey(), Err: ctx.Err()}
 	}
+	var (
+		section []byte
+		err     error
+	)
 	done := make(chan struct{})
 	go func() {
 		var buf bytes.Buffer
@@ -100,12 +114,15 @@ func downloadCtx(ctx context.Context, sess *proto.Session, key renter.KeySeed, s
 		err = ctx.Err()
 	case <-done:
 	}
-	return
+	if err != nil {
+		return nil, &HostError{HostKey: sess.HostKey(), Err: err}
+	}
+	return section, nil
 }
 
 func deleteCtx(ctx context.Context, sess *proto.Session, roots []crypto.Hash) error {
 	if ctx.Err() != nil {
-		return ctx.Err()
+		return &HostError{HostKey: sess.HostKey(), Err: ctx.Err()}
 	}
 	done := make(chan error)
 	go func() {
@@ -115,9 +132,12 @@ func deleteCtx(ctx context.Context, sess *proto.Session, roots []crypto.Hash) er
 	case <-ctx.Done():
 		sess.Interrupt()
 		<-done // wait for goroutine to exit
-		return ctx.Err()
+		return &HostError{HostKey: sess.HostKey(), Err: ctx.Err()}
 	case err := <-done:
-		return err
+		if err != nil {
+			return &HostError{HostKey: sess.HostKey(), Err: err}
+		}
+		return nil
 	}
 }
 
@@ -184,7 +204,7 @@ func (scu SerialChunkUploader) UploadChunk(ctx context.Context, db MetaDB, c DBC
 			return err
 		})
 		if err != nil {
-			return &HostError{hostKey, err}
+			return err
 		}
 		h.SetRPCStatsRecorder(newRPCStatsRecorder(ctx, scu.Recorder))
 
@@ -195,14 +215,15 @@ func (scu SerialChunkUploader) UploadChunk(ctx context.Context, db MetaDB, c DBC
 		})
 		scu.Hosts.release(hostKey)
 		if err != nil {
-			return &HostError{hostKey, err}
+			return err
 		}
 
 		sid, err := db.AddShard(DBShard{hostKey, root, offset, nonce})
 		if err != nil {
-			return err
-		} else if err := db.SetChunkShard(c.ID, i, sid); err != nil {
-			return err
+			return &HostError{HostKey: hostKey, Err: err}
+		}
+		if err := db.SetChunkShard(c.ID, i, sid); err != nil {
+			return &HostError{HostKey: hostKey, Err: err}
 		}
 	}
 	return nil
@@ -301,7 +322,11 @@ func (pcu ParallelChunkUploader) UploadChunk(ctx context.Context, db MetaDB, c D
 
 				// TODO: need to use sb.Len as offset if reusing sb, i.e. when buffering
 				ssid, err := db.AddShard(DBShard{req.hostKey, root, 0, req.nonce})
-				respChan <- resp{req, ssid, err}
+				if err != nil {
+					respChan <- resp{req, ssid, &HostError{HostKey: req.hostKey, Err: err}}
+					continue
+				}
+				respChan <- resp{req, ssid, nil}
 			}
 		}()
 	}
@@ -310,7 +335,7 @@ func (pcu ParallelChunkUploader) UploadChunk(ctx context.Context, db MetaDB, c D
 		defer wg.Done()
 		<-ctx.Done()
 		for req := range reqChan {
-			respChan <- resp{req, 0, ctx.Err()}
+			respChan <- resp{req, 0, &HostError{HostKey: req.hostKey, Err: ctx.Err()}}
 		}
 	}()
 
@@ -358,7 +383,7 @@ func (pcu ParallelChunkUploader) UploadChunk(ctx context.Context, db MetaDB, c D
 	// for those that return errors, add the next host to the queue, non-blocking.
 	// for those that block, add the same host to the queue, blocking.
 	var reqQueue []req
-	var errs HostErrorSet
+	var errs error
 	for inflight > 0 {
 		if ctx.Err() != nil {
 			return ctx.Err()
@@ -388,7 +413,7 @@ func (pcu ParallelChunkUploader) UploadChunk(ctx context.Context, db MetaDB, c D
 				reqQueue = append(reqQueue, resp.req)
 			} else {
 				// uploading to this host failed; don't try it again
-				errs = append(errs, &HostError{resp.req.hostKey, resp.err})
+				errs = multierr.Append(errs, resp.err)
 				// add a different host to the queue, if able
 				if len(newHosts) > 0 {
 					resp.req.hostKey = chooseHost()
@@ -410,300 +435,7 @@ func (pcu ParallelChunkUploader) UploadChunk(ctx context.Context, db MetaDB, c D
 	return nil
 }
 
-// MinimumChunkUploader uploads shards one at a time, stopping as soon as
-// MinShards shards have been uploaded.
-type MinimumChunkUploader struct {
-	Hosts    *HostSet
-	Executor RequestExecutor
-	Recorder RPCStatsRecorder
-}
-
 // UploadChunk implements ChunkUploader.
-func (mcu MinimumChunkUploader) UploadChunk(ctx context.Context, db MetaDB, c DBChunk, key renter.KeySeed, shards [][]byte) error {
-	// choose hosts, preserving any that are already present
-	newHosts := make(map[hostdb.HostPublicKey]struct{})
-	for h := range mcu.Hosts.sessions {
-		newHosts[h] = struct{}{}
-	}
-	need := int(c.MinShards)
-	skip := make([]bool, len(shards))
-	for i, sid := range c.Shards {
-		if sid != 0 {
-			s, err := db.Shard(sid)
-			if err != nil {
-				return err
-			}
-			if mcu.Hosts.HasHost(s.HostKey) {
-				skip[i] = true
-				need--
-				delete(newHosts, s.HostKey)
-			}
-		}
-	}
-	if need > len(newHosts) {
-		return errors.New("fewer hosts than shards")
-	} else if need <= 0 {
-		return nil // already have minimum
-	}
-	chooseHost := func() (h hostdb.HostPublicKey) {
-		for h = range newHosts {
-			delete(newHosts, h)
-			break
-		}
-		return
-	}
-	for i, shard := range shards {
-		if skip[i] {
-			continue
-		}
-		hostKey := chooseHost()
-
-		nonce := renter.RandomNonce()
-		var sb renter.SectorBuilder // TODO: reuse
-		offset := uint32(sb.Len())
-		sb.Append(shard, key, nonce)
-		sector := sb.Finish()
-
-		var h *proto.Session
-		err := mcu.Executor.Execute(ctx, func(ctx context.Context) (err error) {
-			h, err = acquireCtx(ctx, mcu.Hosts, hostKey, true)
-			return err
-		})
-		if err != nil {
-			return &HostError{hostKey, err}
-		}
-		h.SetRPCStatsRecorder(newRPCStatsRecorder(ctx, mcu.Recorder))
-
-		var root crypto.Hash
-		err = mcu.Executor.Execute(ctx, func(ctx context.Context) error {
-			root, err = uploadCtx(ctx, h, sector)
-			return err
-		})
-		mcu.Hosts.release(hostKey)
-		if err != nil {
-			return &HostError{hostKey, err}
-		}
-
-		if sid, err := db.AddShard(DBShard{hostKey, root, offset, nonce}); err != nil {
-			return err
-		} else if err := db.SetChunkShard(c.ID, i, sid); err != nil {
-			return err
-		}
-
-		if need--; need == 0 {
-			break
-		}
-	}
-	return nil
-}
-
-// OverdriveChunkUploader uploads the shards of a chunk in parallel, using up to
-// N overdrive hosts.
-type OverdriveChunkUploader struct {
-	Hosts     *HostSet
-	Overdrive int
-	Executor  RequestExecutor
-	Recorder  RPCStatsRecorder
-}
-
-// UploadChunk implements ChunkUploader.
-func (ocu OverdriveChunkUploader) UploadChunk(ctx context.Context, db MetaDB, c DBChunk, key renter.KeySeed, shards [][]byte) error {
-	if ocu.Overdrive < 0 {
-		panic("overdrive cannot be negative")
-	}
-
-	// choose hosts, preserving any that are already present
-	newHosts := make(map[hostdb.HostPublicKey]struct{})
-	for h := range ocu.Hosts.sessions {
-		newHosts[h] = struct{}{}
-	}
-	rem := len(shards)
-	skip := make([]bool, len(shards))
-	for i, sid := range c.Shards {
-		if sid != 0 {
-			s, err := db.Shard(sid)
-			if err != nil {
-				return err
-			}
-			if ocu.Hosts.HasHost(s.HostKey) {
-				skip[i] = true
-				rem--
-				delete(newHosts, s.HostKey)
-			}
-		}
-	}
-	if rem > len(newHosts) {
-		rem = len(newHosts)
-	}
-
-	// spawn workers
-	numWorkers := rem + ocu.Overdrive
-	if numWorkers > len(newHosts) {
-		numWorkers = len(newHosts)
-	}
-	type sector struct {
-		ctx    context.Context
-		cancel context.CancelFunc
-		shard  *[renterhost.SectorSize]byte
-		nonce  [24]byte
-	}
-	type req struct {
-		*sector
-		shardIndex int
-		hostKey    hostdb.HostPublicKey
-		block      bool // wait to acquire
-	}
-	type resp struct {
-		req  req
-		root crypto.Hash
-		err  error
-	}
-	reqChan := make(chan req, numWorkers)
-	respChan := make(chan resp, numWorkers)
-	var wg sync.WaitGroup
-	wg.Add(numWorkers)
-	ctx, cancel := context.WithCancel(ctx)
-	defer func() {
-		// cancel any outstanding uploads and wait for them to exit
-		close(reqChan)
-		cancel()
-		wg.Wait()
-	}()
-	for i := 0; i < numWorkers; i++ {
-		go func() {
-			defer wg.Done()
-			for req := range reqChan {
-				var sess *proto.Session
-				err := ocu.Executor.Execute(req.ctx, func(ctx context.Context) (err error) {
-					sess, err = acquireCtx(ctx, ocu.Hosts, req.hostKey, req.block)
-					return err
-				})
-				if err != nil {
-					respChan <- resp{req, crypto.Hash{}, err}
-					continue
-				}
-				sess.SetRPCStatsRecorder(newRPCStatsRecorder(req.ctx, ocu.Recorder))
-
-				var root crypto.Hash
-				err = ocu.Executor.Execute(req.ctx, func(ctx context.Context) error {
-					root, err = uploadCtx(ctx, sess, req.shard)
-					return err
-				})
-				ocu.Hosts.release(req.hostKey)
-				if err != nil {
-					respChan <- resp{req, crypto.Hash{}, err}
-					continue
-				}
-				req.cancel()
-				respChan <- resp{req, root, err}
-			}
-		}()
-	}
-
-	// construct sectors
-	sectors := make([]*sector, len(c.Shards))
-	for i, shard := range shards {
-		if skip[i] {
-			continue
-		}
-		var sb renter.SectorBuilder
-		nonce := renter.RandomNonce()
-		sb.Append(shard, key, nonce)
-
-		ctx, cancel := context.WithCancel(ctx)
-		sectors[i] = &sector{
-			ctx:    ctx,
-			cancel: cancel,
-			shard:  sb.Finish(),
-			nonce:  nonce,
-		}
-	}
-
-	// start by requesting one upload per worker, all non-blocking.
-	var reqQueue []req
-	success := make([]bool, len(c.Shards))
-	i := 0
-	for h := range newHosts {
-	again:
-		shardIndex := i % len(c.Shards)
-		i++
-		if skip[shardIndex] {
-			success[shardIndex] = true
-			goto again
-		}
-		reqQueue = append(reqQueue, req{
-			sector:     sectors[shardIndex],
-			shardIndex: shardIndex,
-			hostKey:    h,
-			block:      false,
-		})
-	}
-	for _, req := range reqQueue[:numWorkers] {
-		reqChan <- req
-	}
-	reqQueue = reqQueue[numWorkers:]
-	inflight := numWorkers
-
-	// for those that return errors, add the next host to the queue, non-blocking.
-	// for those that block, add the same host to the queue, blocking.
-	var errs HostErrorSet
-	for rem > 0 && inflight > 0 {
-		resp := <-respChan
-		inflight--
-
-		if success[resp.req.shardIndex] {
-			// an earlier worker already succeeded
-			for i, v := range success {
-				if !v {
-					reqChan <- req{
-						sector:     sectors[i],
-						shardIndex: i,
-						hostKey:    resp.req.hostKey,
-						block:      false,
-					}
-					inflight++
-					break
-				}
-			}
-			continue
-		}
-
-		if resp.err == nil {
-			// NOTE: in theory, we could attempt to continue storing the
-			// remaining successful shards, but in practice, if
-			// SetChunkShard fails, it indicates a serious problem with the
-			// db and subsequent calls are not likely to succeed.
-			if ssid, err := db.AddShard(DBShard{resp.req.hostKey, resp.root, 0, resp.req.nonce}); err != nil {
-				return err
-			} else if err := db.SetChunkShard(c.ID, resp.req.shardIndex, ssid); err != nil {
-				return err
-			}
-			rem--
-			success[resp.req.shardIndex] = true
-		} else {
-			if resp.err == ErrHostAcquired {
-				// host could not be acquired without blocking; add it to the back
-				// of the queue, but next time, block
-				resp.req.block = true
-				reqQueue = append(reqQueue, resp.req)
-			} else {
-				// uploading to this host failed; don't try it again
-				errs = append(errs, &HostError{resp.req.hostKey, resp.err})
-			}
-			// try the next host in the queue
-			if len(reqQueue) > 0 {
-				reqChan <- reqQueue[0]
-				reqQueue = reqQueue[1:]
-				inflight++
-			}
-		}
-	}
-	if rem > 0 {
-		return fmt.Errorf("could not upload to enough hosts: %w", errs)
-	}
-	return nil
-}
-
 // A ChunkDownloader downloads the shards of a chunk.
 type ChunkDownloader interface {
 	DownloadChunk(ctx context.Context, db MetaDB, c DBChunk, key renter.KeySeed, off, n int64) ([][]byte, error)
@@ -723,7 +455,7 @@ func (scd SerialChunkDownloader) DownloadChunk(ctx context.Context, db MetaDB, c
 	for i := range shards {
 		shards[i] = make([]byte, 0, renterhost.SectorSize)
 	}
-	var errs HostErrorSet
+	var errs error
 	need := c.MinShards
 	for i, ssid := range c.Shards {
 		shard, err := db.Shard(ssid)
@@ -744,7 +476,7 @@ func (scd SerialChunkDownloader) DownloadChunk(ctx context.Context, db MetaDB, c
 			return err
 		})
 		if err != nil {
-			errs = append(errs, &HostError{shard.HostKey, err})
+			errs = multierr.Append(errs, err)
 			continue
 		}
 		sess.SetRPCStatsRecorder(newRPCStatsRecorder(ctx, scd.Recorder))
@@ -756,7 +488,7 @@ func (scd SerialChunkDownloader) DownloadChunk(ctx context.Context, db MetaDB, c
 		})
 		scd.Hosts.release(shard.HostKey)
 		if err != nil {
-			errs = append(errs, &HostError{shard.HostKey, err})
+			errs = multierr.Append(errs, err)
 			continue
 		}
 		shards[i] = section
@@ -799,7 +531,7 @@ func (pcd ParallelChunkDownloader) DownloadChunk(ctx context.Context, db MetaDB,
 	}
 	type resp struct {
 		shardIndex int
-		err        *HostError
+		err        error
 	}
 	reqChan := make(chan req, c.MinShards)
 	respChan := make(chan resp, c.MinShards)
@@ -827,7 +559,7 @@ func (pcd ParallelChunkDownloader) DownloadChunk(ctx context.Context, db MetaDB,
 					return err
 				})
 				if err != nil {
-					respChan <- resp{req.shardIndex, &HostError{shard.HostKey, err}}
+					respChan <- resp{req.shardIndex, err}
 					continue
 				}
 				sess.SetRPCStatsRecorder(newRPCStatsRecorder(ctx, pcd.Recorder))
@@ -839,7 +571,7 @@ func (pcd ParallelChunkDownloader) DownloadChunk(ctx context.Context, db MetaDB,
 				})
 				pcd.Hosts.release(shard.HostKey)
 				if err != nil {
-					respChan <- resp{req.shardIndex, &HostError{shard.HostKey, err}}
+					respChan <- resp{req.shardIndex, err}
 					continue
 				}
 				shards[req.shardIndex] = section
@@ -851,13 +583,13 @@ func (pcd ParallelChunkDownloader) DownloadChunk(ctx context.Context, db MetaDB,
 	}
 
 	var goodShards int
-	var errs HostErrorSet
-	for goodShards < int(c.MinShards) && goodShards+len(errs) < len(c.Shards) {
+	var errs error
+	for goodShards < int(c.MinShards) && goodShards+len(multierr.Errors(errs)) < len(c.Shards) {
 		resp := <-respChan
 		if resp.err == nil {
 			goodShards++
 		} else {
-			if resp.err.Err == ErrHostAcquired {
+			if errors.Is(resp.err, ErrHostAcquired) {
 				// host could not be acquired without blocking; add it to the back
 				// of the queue, but next time, block
 				reqQueue = append(reqQueue, req{
@@ -866,7 +598,7 @@ func (pcd ParallelChunkDownloader) DownloadChunk(ctx context.Context, db MetaDB,
 				})
 			} else {
 				// downloading from this host failed; don't try it again
-				errs = append(errs, resp.err)
+				errs = multierr.Append(errs, resp.err)
 			}
 			// try the next host in the queue
 			if len(reqQueue) > 0 {
@@ -917,7 +649,7 @@ func (ocd OverdriveChunkDownloader) DownloadChunk(ctx context.Context, db MetaDB
 	type resp struct {
 		req   req
 		shard []byte
-		err   *HostError
+		err   error
 	}
 	reqChan := make(chan req, numWorkers)
 	respChan := make(chan resp, numWorkers)
@@ -945,7 +677,7 @@ func (ocd OverdriveChunkDownloader) DownloadChunk(ctx context.Context, db MetaDB
 					return err
 				})
 				if err != nil {
-					respChan <- resp{req, nil, &HostError{shard.HostKey, err}}
+					respChan <- resp{req, nil, err}
 					continue
 				}
 				sess.SetRPCStatsRecorder(newRPCStatsRecorder(ctx, ocd.Recorder))
@@ -957,7 +689,7 @@ func (ocd OverdriveChunkDownloader) DownloadChunk(ctx context.Context, db MetaDB
 				})
 				ocd.Hosts.release(shard.HostKey)
 				if err != nil {
-					respChan <- resp{req, nil, &HostError{shard.HostKey, err}}
+					respChan <- resp{req, nil, err}
 					continue
 				}
 				respChan <- resp{req, section, nil}
@@ -982,21 +714,21 @@ func (ocd OverdriveChunkDownloader) DownloadChunk(ctx context.Context, db MetaDB
 		shards[i] = make([]byte, 0, length)
 	}
 	var goodShards int
-	var errs HostErrorSet
-	for goodShards < int(c.MinShards) && goodShards+len(errs) < len(c.Shards) {
+	var errs error
+	for goodShards < int(c.MinShards) && goodShards+len(multierr.Errors(errs)) < len(c.Shards) {
 		resp := <-respChan
 		if resp.err == nil {
 			goodShards++
 			shards[resp.req.shardIndex] = resp.shard
 		} else {
-			if resp.err.Err == ErrHostAcquired {
+			if errors.Is(resp.err, ErrHostAcquired) {
 				// host could not be acquired without blocking; add it to the back
 				// of the queue, but next time, block
 				resp.req.block = true
 				reqQueue = append(reqQueue, resp.req)
 			} else {
 				// downloading from this host failed; don't try it again
-				errs = append(errs, resp.err)
+				errs = multierr.Append(errs, resp.err)
 			}
 			// try the next host in the queue
 			if len(reqQueue) > 0 {
@@ -1524,17 +1256,17 @@ type ParallelSectorDeleter struct {
 
 // DeleteSectors implements SectorDeleter.
 func (psd ParallelSectorDeleter) DeleteSectors(ctx context.Context, db MetaDB, sectors map[hostdb.HostPublicKey][]crypto.Hash) error {
-	errCh := make(chan *HostError)
+	errCh := make(chan error)
 	for hostKey, roots := range sectors {
 		go func(hostKey hostdb.HostPublicKey, roots []crypto.Hash) {
-			errCh <- func() *HostError {
+			errCh <- func() error {
 				var h *proto.Session
 				err := psd.Executor.Execute(ctx, func(ctx context.Context) (err error) {
 					h, err = acquireCtx(ctx, psd.Hosts, hostKey, true)
 					return err
 				})
 				if err != nil {
-					return &HostError{hostKey, err}
+					return err
 				}
 				h.SetRPCStatsRecorder(newRPCStatsRecorder(ctx, psd.Recorder))
 
@@ -1543,17 +1275,17 @@ func (psd ParallelSectorDeleter) DeleteSectors(ctx context.Context, db MetaDB, s
 				})
 				psd.Hosts.release(hostKey)
 				if err != nil && !errors.Is(err, contractmanager.ErrSectorNotFound) {
-					return &HostError{hostKey, err}
+					return err
 				}
 				// TODO: mark sectors as deleted in db
 				return nil
 			}()
 		}(hostKey, roots)
 	}
-	var errs HostErrorSet
+	var errs error
 	for range sectors {
 		if err := <-errCh; err != nil {
-			errs = append(errs, err)
+			errs = multierr.Append(errs, err)
 		}
 	}
 	if errs != nil {
