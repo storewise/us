@@ -11,6 +11,8 @@ type RequestExecutor interface {
 // RequestExecutorFunc is an adapter that allows to use a function as a RequestExecutor.
 type RequestExecutorFunc func(context.Context, func(context.Context) error) error
 
+var _ RequestExecutor = (RequestExecutorFunc)(nil)
+
 // Execute executes the given request and returns an error if fails.
 func (f RequestExecutorFunc) Execute(ctx context.Context, req func(context.Context) error) error {
 	return f(ctx, req)
