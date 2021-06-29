@@ -468,7 +468,7 @@ func (s *Session) Read(w io.Writer, sections []renterhost.RPCReadRequestSection)
 	// host will now stream back responses; ensure we send RPCLoopReadStop
 	// before returning
 	defer func() {
-		if e := s.sess.WriteResponse(&renterhost.RPCReadStop, nil); e != nil {
+		if e := s.sess.WriteResponse(&renterhost.RPCReadStop, nil); e != nil && !errors.Is(e, net.ErrClosed) {
 			err = multierr.Append(err, e)
 		}
 	}()
