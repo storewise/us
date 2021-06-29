@@ -435,7 +435,6 @@ func (pcu ParallelChunkUploader) UploadChunk(ctx context.Context, db MetaDB, c D
 	return nil
 }
 
-// UploadChunk implements ChunkUploader.
 // A ChunkDownloader downloads the shards of a chunk.
 type ChunkDownloader interface {
 	DownloadChunk(ctx context.Context, db MetaDB, c DBChunk, key renter.KeySeed, off, n int64) ([][]byte, error)
@@ -746,7 +745,7 @@ func (ocd OverdriveChunkDownloader) DownloadChunk(ctx context.Context, db MetaDB
 // A ChunkUpdater updates or replaces an existing chunk, returning the ID of the
 // new chunk.
 type ChunkUpdater interface {
-	UpdateChunk(ctx context.Context, db MetaDB, b DBBlob, c DBChunk) (uint64, error)
+	UpdateChunk(ctx context.Context, db MetaDB, b DBBlob, c DBChunk, shouldUpdate func(MetaDB, DBChunk) (bool, error)) (uint64, error)
 }
 
 // GenericChunkUpdater updates chunks by downloading them with D and reuploading
@@ -759,18 +758,19 @@ type GenericChunkUpdater struct {
 	// If true, the chunk's encoding parameters are used, and the chunk is
 	// updated directly instead of a new chunk being added to the DB.
 	InPlace bool
-
-	// If non-nil, skip any chunk for which this function returns false.
-	ShouldUpdate func(MetaDB, DBChunk) (bool, error)
 }
 
+var _ ChunkUpdater = (*GenericChunkUpdater)(nil)
+
 // UpdateChunk implements ChunkUpdater.
-func (gcu GenericChunkUpdater) UpdateChunk(ctx context.Context, db MetaDB, b DBBlob, c DBChunk) (uint64, error) {
-	if gcu.ShouldUpdate != nil {
-		shouldUpdate, err := gcu.ShouldUpdate(db, c)
+func (gcu GenericChunkUpdater) UpdateChunk(
+	ctx context.Context, db MetaDB, b DBBlob, c DBChunk, shouldUpdate func(MetaDB, DBChunk) (bool, error),
+) (uint64, error) {
+	if shouldUpdate != nil {
+		update, err := shouldUpdate(db, c)
 		if err != nil {
 			return 0, err
-		} else if !shouldUpdate {
+		} else if !update {
 			return 0, errMigrationSkipped
 		}
 	}
@@ -1172,7 +1172,7 @@ func (pbd ParallelBlobDownloader) DownloadBlob(ctx context.Context, db MetaDB, b
 
 // A BlobUpdater updates the contents of a blob.
 type BlobUpdater interface {
-	UpdateBlob(ctx context.Context, db MetaDB, b DBBlob) error
+	UpdateBlob(ctx context.Context, db MetaDB, b DBBlob, shouldUpdate func(MetaDB, DBChunk) (bool, error)) error
 }
 
 // SerialBlobUpdater uploads the chunks of a blob one at a time.
@@ -1180,8 +1180,10 @@ type SerialBlobUpdater struct {
 	U ChunkUpdater
 }
 
+var _ BlobUpdater = (*SerialBlobUpdater)(nil)
+
 // UpdateBlob implements BlobUpdater.
-func (sbu SerialBlobUpdater) UpdateBlob(ctx context.Context, db MetaDB, b DBBlob) error {
+func (sbu SerialBlobUpdater) UpdateBlob(ctx context.Context, db MetaDB, b DBBlob, shouldUpdate func(MetaDB, DBChunk) (bool, error)) error {
 	for i, cid := range b.Chunks {
 		if ctx.Err() != nil {
 			return ctx.Err()
@@ -1191,7 +1193,7 @@ func (sbu SerialBlobUpdater) UpdateBlob(ctx context.Context, db MetaDB, b DBBlob
 		if err != nil {
 			return err
 		}
-		id, err := sbu.U.UpdateChunk(ctx, db, b, c)
+		id, err := sbu.U.UpdateChunk(ctx, db, b, c, shouldUpdate)
 		if err != nil {
 			if errors.Is(err, errMigrationSkipped) {
 				continue
