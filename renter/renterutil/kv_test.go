@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io/ioutil"
 	"net"
-	"os"
 	"path/filepath"
 	"strconv"
 	"testing"
@@ -37,28 +36,10 @@ func createTestingKV(tb testing.TB, numHosts, m, n int) PseudoKV {
 		})
 	}
 
-	// use ephemeral DB during short tests
-	var db MetaDB
-	if testing.Short() {
-		db = NewEphemeralMetaDB()
-	} else {
-		dir, err := ioutil.TempDir("", tb.Name())
-		if err != nil {
-			tb.Fatal(err)
-		}
-		if err := os.MkdirAll(dir, 0700); err != nil {
-			tb.Fatal(err)
-		}
-		tb.Cleanup(func() {
-			if err := os.RemoveAll(dir); err != nil {
-				tb.Error(err)
-			}
-		})
-		dbName := filepath.Join(dir, "kv.db")
-		db, err = NewBoltMetaDB(dbName)
-		if err != nil {
-			tb.Fatal(err)
-		}
+	dbName := filepath.Join(tb.TempDir(), "kv.db")
+	db, err := NewBoltMetaDB(dbName)
+	if err != nil {
+		tb.Fatal(err)
 	}
 	uploader := ParallelChunkUploader{
 		Hosts:    hs,
