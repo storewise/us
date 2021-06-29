@@ -5,7 +5,6 @@ import (
 	"crypto/rand"
 	"errors"
 	"io/ioutil"
-	"os"
 	"reflect"
 	"testing"
 
@@ -20,15 +19,10 @@ import (
 func newTempBoldMetaDB(t *testing.T) *BoltMetaDB {
 	t.Helper()
 
-	file, err := ioutil.TempFile("", "")
+	file, err := ioutil.TempFile(t.TempDir(), "")
 	if err != nil {
 		t.Fatal("failed to create a temporary file:", err)
 	}
-	t.Cleanup(func() {
-		if err := os.Remove(file.Name()); err != nil {
-			t.Error("failed to remove a temporary file:", err)
-		}
-	})
 
 	db, err := NewBoltMetaDB(file.Name())
 	if err != nil {
@@ -166,6 +160,47 @@ func TestBoltMetaDB_Chunk(t *testing.T) {
 
 	if !reflect.DeepEqual(res, chunk) {
 		t.Errorf("expect %v, got %v", chunk, res)
+	}
+}
+
+func TestBoltMetaDB_AddChunkAndShards(t *testing.T) {
+	db := newTempBoldMetaDB(t)
+	m := 5
+	length := uint64(12345)
+	shard := randomShard(t)
+
+	chunk, err := db.AddChunkAndShards(m, length, []*DBShard{nil, &shard, nil})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if int(chunk.MinShards) != m {
+		t.Errorf("expect %v, got %v", m, chunk.MinShards)
+	}
+	if chunk.Len != length {
+		t.Errorf("expect %v, got %v", length, chunk.Len)
+	}
+	if len(chunk.Shards) != 3 {
+		t.Errorf("expect %v, got %v", 3, len(chunk.Shards))
+	}
+	if chunk.Shards[0] != 0 || chunk.Shards[2] != 0 {
+		t.Errorf("expect %v, got %v and %v", 0, chunk.Shards[0], chunk.Shards[2])
+	}
+
+	s, err := db.Shard(chunk.Shards[1])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(&s, &shard) {
+		t.Errorf("expect %v, got %v", shard, s)
+	}
+
+	c, err := db.Chunk(chunk.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(&c, &chunk) {
+		t.Errorf("expect %v, got %v", chunk, c)
 	}
 }
 

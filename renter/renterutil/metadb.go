@@ -420,6 +420,9 @@ func (db *BoltMetaDB) AddChunkAndShards(m int, length uint64, ss []*DBShard) (c 
 	err = db.bdb.Update(func(tx *bolt.Tx) error {
 		shards := make([]uint64, len(ss))
 		for i, s := range ss {
+			if s == nil {
+				continue
+			}
 			id, err := db.addShard(tx, *s)
 			if err != nil {
 				return nil
