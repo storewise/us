@@ -820,6 +820,9 @@ func (gcu GenericChunkUpdater) UpdateChunk(
 func NewMigrationWhitelist(whitelist []hostdb.HostPublicKey) func(MetaDB, DBChunk) (bool, error) {
 	return func(db MetaDB, c DBChunk) (bool, error) {
 		for _, id := range c.Shards {
+			if id == 0 {
+				continue
+			}
 			s, err := db.Shard(id)
 			if err != nil {
 				return false, err
@@ -841,6 +844,9 @@ func NewMigrationWhitelist(whitelist []hostdb.HostPublicKey) func(MetaDB, DBChun
 func NewMigrationBlacklist(blacklist []hostdb.HostPublicKey) func(MetaDB, DBChunk) (bool, error) {
 	return func(db MetaDB, c DBChunk) (bool, error) {
 		for _, id := range c.Shards {
+			if id == 0 {
+				continue
+			}
 			s, err := db.Shard(id)
 			if err != nil {
 				return false, err
