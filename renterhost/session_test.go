@@ -9,10 +9,11 @@ import (
 	"reflect"
 	"testing"
 
-	"gitlab.com/NebulousLabs/Sia/crypto"
-	"gitlab.com/NebulousLabs/Sia/types"
 	"gitlab.com/NebulousLabs/encoding"
+	"go.sia.tech/siad/crypto"
+	"go.sia.tech/siad/types"
 	"golang.org/x/crypto/chacha20poly1305"
+
 	"lukechampine.com/frand"
 )
 
@@ -113,9 +114,11 @@ type pipeRWC struct {
 func (p pipeRWC) Read(b []byte) (int, error) {
 	return p.r.Read(b)
 }
+
 func (p pipeRWC) Write(b []byte) (int, error) {
 	return p.w.Write(b)
 }
+
 func (p pipeRWC) Close() error {
 	p.r.Close()
 	return p.w.Close()

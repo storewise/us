@@ -7,9 +7,9 @@ import (
 	"io/ioutil"
 	"testing"
 
-	"gitlab.com/NebulousLabs/Sia/crypto"
-	"gitlab.com/NebulousLabs/Sia/types"
 	"gitlab.com/NebulousLabs/encoding"
+	"go.sia.tech/siad/crypto"
+	"go.sia.tech/siad/types"
 
 	"lukechampine.com/us/ghost"
 	"lukechampine.com/us/renterhost"
@@ -25,6 +25,7 @@ func (stubWallet) Address() (_ types.UnlockHash, _ error) { return }
 func (stubWallet) FundTransaction(*types.Transaction, types.Currency) ([]crypto.Hash, func(), error) {
 	return nil, func() {}, nil
 }
+
 func (stubWallet) SignTransaction(txn *types.Transaction, toSign []crypto.Hash) error {
 	txn.TransactionSignatures = append(txn.TransactionSignatures, make([]types.TransactionSignature, len(toSign))...)
 	return nil

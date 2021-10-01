@@ -14,10 +14,9 @@ import (
 	"os"
 	"strings"
 	"time"
-	"unsafe"
 
 	"github.com/aead/chacha20/chacha"
-	"gitlab.com/NebulousLabs/Sia/crypto"
+	"go.sia.tech/siad/crypto"
 	"go.uber.org/multierr"
 
 	"lukechampine.com/frand"
@@ -38,7 +37,7 @@ const (
 )
 
 // assert that SectorSliceSize is accurate
-var _ [SectorSliceSize]struct{} = [unsafe.Sizeof(SectorSlice{})]struct{}{}
+// var _ [SectorSliceSize]struct{} = [unsafe.Sizeof(SectorSlice{})]struct{}{}
 
 // A MetaFile is a set of metadata that represents a file stored on Sia hosts.
 type MetaFile struct {

@@ -8,9 +8,9 @@ import (
 	"reflect"
 	"testing"
 
-	"gitlab.com/NebulousLabs/Sia/crypto"
 	"gitlab.com/NebulousLabs/encoding"
 	bolt "go.etcd.io/bbolt"
+	"go.sia.tech/siad/crypto"
 
 	"lukechampine.com/us/hostdb"
 	"lukechampine.com/us/renter"

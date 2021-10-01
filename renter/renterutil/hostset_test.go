@@ -7,11 +7,11 @@ import (
 	"strings"
 	"testing"
 
-	"gitlab.com/NebulousLabs/Sia/crypto"
-	"gitlab.com/NebulousLabs/Sia/types"
+	"go.sia.tech/siad/crypto"
+	"go.sia.tech/siad/types"
+
 	"lukechampine.com/frand"
 	"lukechampine.com/us/ghost"
-
 	"lukechampine.com/us/hostdb"
 )
 

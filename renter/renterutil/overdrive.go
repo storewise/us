@@ -7,8 +7,9 @@ import (
 	"io"
 	"sync"
 
-	"gitlab.com/NebulousLabs/Sia/crypto"
+	"go.sia.tech/siad/crypto"
 	"go.uber.org/multierr"
+
 	"lukechampine.com/us/hostdb"
 	"lukechampine.com/us/renter"
 	"lukechampine.com/us/renter/proto"

@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"gitlab.com/NebulousLabs/Sia/types"
+	"go.sia.tech/siad/types"
 	"go.uber.org/multierr"
 	"golang.org/x/sync/semaphore"
 

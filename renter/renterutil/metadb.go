@@ -7,9 +7,9 @@ import (
 	"os"
 	"time"
 
-	"gitlab.com/NebulousLabs/Sia/crypto"
 	"gitlab.com/NebulousLabs/encoding"
 	bolt "go.etcd.io/bbolt"
+	"go.sia.tech/siad/crypto"
 	"go.uber.org/multierr"
 
 	"lukechampine.com/us/hostdb"

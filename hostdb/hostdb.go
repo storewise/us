@@ -11,8 +11,9 @@ import (
 	"strings"
 	"time"
 
-	"gitlab.com/NebulousLabs/Sia/modules"
-	"gitlab.com/NebulousLabs/Sia/types"
+	"go.sia.tech/siad/modules"
+	"go.sia.tech/siad/types"
+
 	"lukechampine.com/us/renterhost"
 )
 
@@ -147,7 +148,10 @@ func Scan(ctx context.Context, addr modules.NetAddress, pubkey HostPublicKey) (h
 			}
 			return nil
 		}()
-		ch <- res{host, fmt.Errorf("could not read signed host settings: %w", err)}
+		if err != nil {
+			err = fmt.Errorf("could not read signed host settings: %w", err)
+		}
+		ch <- res{host, err}
 	}()
 	select {
 	case <-ctx.Done():

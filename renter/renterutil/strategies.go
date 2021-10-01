@@ -8,8 +8,8 @@ import (
 	"io"
 	"sync"
 
-	"gitlab.com/NebulousLabs/Sia/crypto"
-	"gitlab.com/NebulousLabs/Sia/modules/host/contractmanager"
+	"go.sia.tech/siad/crypto"
+	"go.sia.tech/siad/modules/host/contractmanager"
 	"go.uber.org/multierr"
 	"lukechampine.com/frand"
 

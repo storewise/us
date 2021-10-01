@@ -9,9 +9,9 @@ import (
 	"os"
 	"testing"
 
-	"gitlab.com/NebulousLabs/Sia/crypto"
-	"gitlab.com/NebulousLabs/Sia/modules"
-	"gitlab.com/NebulousLabs/Sia/types"
+	"go.sia.tech/siad/crypto"
+	"go.sia.tech/siad/modules"
+	"go.sia.tech/siad/types"
 	"lukechampine.com/frand"
 
 	"lukechampine.com/us/ghost"
@@ -27,6 +27,7 @@ func (stubWallet) Address() (_ types.UnlockHash, _ error) { return }
 func (stubWallet) FundTransaction(*types.Transaction, types.Currency) ([]crypto.Hash, func(), error) {
 	return nil, func() {}, nil
 }
+
 func (stubWallet) SignTransaction(txn *types.Transaction, toSign []crypto.Hash) error {
 	txn.TransactionSignatures = append(txn.TransactionSignatures, make([]types.TransactionSignature, len(toSign))...)
 	return nil
@@ -146,7 +147,7 @@ func TestFileSystemBasic(t *testing.T) {
 		t.Error("incorrect name")
 	} else if stat.Size() != int64(len(data)) {
 		t.Error("incorrect size", stat.Size(), len(data))
-	} else if stat.Mode() != 0666 {
+	} else if stat.Mode() != 0o666 {
 		t.Error("incorrect mode")
 	}
 
@@ -157,7 +158,7 @@ func TestFileSystemBasic(t *testing.T) {
 	}
 
 	// chmod file
-	err = fs.Chmod("foo", 0676)
+	err = fs.Chmod("foo", 0o676)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -177,7 +178,7 @@ func TestFileSystemBasic(t *testing.T) {
 		t.Error("incorrect name")
 	} else if stat.Size() != int64(len(data)) {
 		t.Error("incorrect size", stat.Size(), len(data))
-	} else if stat.Mode() != 0676 {
+	} else if stat.Mode() != 0o676 {
 		t.Error("incorrect mode")
 	}
 

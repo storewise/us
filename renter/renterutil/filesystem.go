@@ -15,7 +15,7 @@ import (
 	"sync"
 	"time"
 
-	"gitlab.com/NebulousLabs/Sia/crypto"
+	"go.sia.tech/siad/crypto"
 	"go.uber.org/multierr"
 
 	"lukechampine.com/us/hostdb"
@@ -102,7 +102,7 @@ func (fs *PseudoFS) Chmod(name string, mode os.FileMode) error {
 // (before umask), truncating it if it already exists. The returned file has
 // mode O_RDWR.
 func (fs *PseudoFS) Create(name string, minShards int) (*PseudoFile, error) {
-	return fs.OpenFile(name, os.O_CREATE|os.O_TRUNC|os.O_RDWR, 0666, minShards)
+	return fs.OpenFile(name, os.O_CREATE|os.O_TRUNC|os.O_RDWR, 0o666, minShards)
 }
 
 // Mkdir creates a new directory with the specified name and permission bits
@@ -203,7 +203,7 @@ func (fs *PseudoFS) OpenFile(name string, flag int, perm os.FileMode, minShards 
 		var err error
 		m, err = renter.ReadMetaFile(path)
 		if err != nil {
-			return nil, fmt.Errorf("open %v: %w", name, err)
+			return nil, fmt.Errorf("open %v: %w", path, err)
 		}
 		// check whether we have a session for each of the file's hosts
 		var missing []string
@@ -526,9 +526,11 @@ const rwmask = os.O_RDONLY | os.O_WRONLY | os.O_RDWR
 func (pf PseudoFile) writeable() bool {
 	return pf.flags&rwmask == os.O_WRONLY || pf.flags&rwmask == os.O_RDWR
 }
+
 func (pf PseudoFile) readable() bool {
 	return pf.flags&rwmask == os.O_RDONLY || pf.flags&rwmask == os.O_RDWR
 }
+
 func (pf PseudoFile) appendOnly() bool {
 	return pf.flags&os.O_APPEND == os.O_APPEND
 }
